@@ -1,4 +1,4 @@
-use crate::{BitOps, Choice, Word};
+use crate::{BitOps, Choice};
 
 use super::Limb;
 
@@ -77,8 +77,10 @@ impl Limb {
     /// Clear bits at or above the given bit position.
     #[must_use]
     pub const fn restrict_bits(self, len: u32) -> Self {
-        #[allow(trivial_numeric_casts)]
-        self.bitand(Limb((1 as Word).overflowing_shl(len).0 - 1))
+        match Limb::ONE.0.checked_shl(len) {
+            Some(bit) => self.bitand(Limb(bit - 1)),
+            None => self,
+        }
     }
 }
 
@@ -283,5 +285,17 @@ mod tests {
         let mut u = limb_with_bits_at(&[2, 8, 9]);
         BitOps::set_bit_vartime(&mut u, 9, false);
         assert_eq!(u, limb_with_bits_at(&[2, 8]));
+    }
+
+    #[test]
+    fn restrict_bits() {
+        let u = limb_with_bits_at(&[0, 2, Limb::BITS - 1]);
+        assert_eq!(u.restrict_bits(0), Limb::ZERO);
+        assert_eq!(u.restrict_bits(1), limb_with_bits_at(&[0]));
+        assert_eq!(u.restrict_bits(3), limb_with_bits_at(&[0, 2]));
+        assert_eq!(u.restrict_bits(Limb::BITS - 1), limb_with_bits_at(&[0, 2]));
+        assert_eq!(u.restrict_bits(Limb::BITS), u);
+        assert_eq!(u.restrict_bits(Limb::BITS + 1), u);
+        assert_eq!(u.restrict_bits(u32::MAX), u);
     }
 }
