@@ -17,6 +17,10 @@ fi
 printf '%s  %s\n' "$sha256" "$archive" | sha256sum --check --strict
 unzip -q -o "$archive" -d "$solver_cache"
 solver_bin="$solver_cache/$asset/bin"
-test "$("$solver_bin/z3" -version)" = "Z3 version 5.3.1 - 64 bit"
-"$solver_bin/z3" -version
+solver_version=$("$solver_bin/z3" -version)
+printf '%s\n' "$solver_version"
+case "$solver_version" in
+    "Z3 version 5.3.1 - 64 bit" | "Z3 version 5.3.1 - 64 bit "*) ;;
+    *) printf '%s\n' 'Unexpected Z3 version' >&2; exit 1 ;;
+esac
 printf '%s\n' "$solver_bin" >> "$GITHUB_PATH"
