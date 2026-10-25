@@ -6,6 +6,8 @@ Status legend:
 
 "Debug" and "release" refer to Cargo's corresponding profiles, including standalone native probes.
 Unless explicitly dated below, line numbers refer to commit `d1a4e1c` (the branch base).
+Regression totals include both `tests/kani_regressions.rs` and test-gated inline modules:
+currently 27 integration-file harnesses and 12 inline harnesses, for 39 unresolved cases.
 
 ## Upstream recheck: 2026-10-25
 
@@ -22,8 +24,8 @@ in older entries are historical evidence only; they are not part of the new bran
   `/tmp/kani-ci-round-native{64,32}.log` (908/904 tests, including doctests).
 - The exact max-carry and boxed one-limb zero-parameter regressions have moved into library
   harnesses. Their original expected values remain intact. Further default-library coverage
-  and Kani results are recorded in the latest `KANI_PLAN.md` entry. The unresolved integration
-  suite now contains 39 regressions.
+  and Kani results are recorded in the latest `KANI_PLAN.md` entry. The unresolved test suite
+  now contains 39 regressions.
 - A direct fixed-width `Uint<1>::mul_mod_special` Kani harness still triggers the previously
   documented compiler internal error in the unreachable `from_wide_word` branch. It is not
   retained as an active harness because it prevents compiling all library proofs. Native

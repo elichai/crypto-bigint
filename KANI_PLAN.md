@@ -7,7 +7,7 @@ The published proof branch starts directly at upstream `f9e15c8` (v0.7.8, upstre
 commits. The previous history and uncommitted work were preserved on the local
 `elichai/kani-proofs-backup-20261025` branch and in scratch patches before replay.
 Older merge hashes below describe historical checks, not the new branch's history.
-All source changes relative to current upstream are proof modules; Cargo's extra cfg lint
+All Rust source changes relative to current upstream are proof modules; Cargo's extra cfg lint
 registration allows `cfg(kani)`. No local runtime fix is included.
 
 ### Additional proofs and restored regressions
@@ -76,11 +76,19 @@ exit code and error details. No disabled checks or blanket `continue-on-error` h
 
 The explicit pending manifest is a backlog of unproved obligations, not successful proofs.
 Manual diagnostics can retry it with larger budgets and remain visibly failed when unproved.
-Known bug counterexamples are separate integration harnesses. Branch protection is not changed;
-the documentation lists the checks a maintainer can require.
+Known bug counterexamples are separate test harnesses (27 integration-file and 12 inline).
+Branch protection is not changed; the documentation lists the checks a maintainer can require.
 
-CI caches Kani/toolchain and Cargo downloads. It does not cache successful proof results or
-commit generated solver/build binaries. Every selected property is checked again. Cache hits
+CI pins Z3 5.3.1 with a checked release-archive SHA-256, matching local verification. The first
+hosted run used Ubuntu's Z3 4.8.12 and timed out on `boxed_square_wide_64` with forced32;
+84 other harnesses in that shard passed. No counterexample was produced. One other hosted
+runner shut down with exit 143 before preserving proof results; that is an infrastructure
+failure, not a verification result. The corrected workflow must be checked on its own run.
+
+CI caches the exact Kani nightly/toolchain, Cargo downloads and the checked Z3 archive.
+Kani's installer downloads its bundle again even on cache hits, so that bundle is not cached.
+CI does not cache successful proof results or commit generated solver/build binaries.
+Every selected property is checked again. Cache hits
 reduce setup; they do not eliminate the dominant solver work. The historical local timings
 are not a benchmark of GitHub-hosted performance.
 
