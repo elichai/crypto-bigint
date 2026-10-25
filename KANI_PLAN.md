@@ -85,6 +85,9 @@ hosted run used Ubuntu's Z3 4.8.12 and timed out on `boxed_square_wide_64` with 
 that proof passes in 25.421 seconds, and all 85 harnesses in its shard pass in run
 `40184650379`. Six proof shards passed in that run. Forced32 shard 2 passed 73/74,
 with `uint_mul_u64_correct` timing out at 300 seconds without a counterexample.
+The unchanged multiplication property passes locally with CaDiCaL in 24.935 seconds, so
+forced32 now selects CaDiCaL while Word64 retains Z3. Its domain and both exact-product
+assertions are unchanged; the updated solver choice still needs its own hosted check.
 Word64 shard 3 lost its hosted runner with exit 143 on two runs before preserving
 results. The cause is unconfirmed; those runs do not establish a verification result.
 The runner now streams active harnesses and outcomes, prints a host resource baseline,
