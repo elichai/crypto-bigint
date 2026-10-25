@@ -18,10 +18,18 @@ The workflow installs the official **Z3 5.3.1** x86_64/glibc-2.39 release, match
 local verification version. `scripts/kani-install-z3.sh` verifies its pinned SHA-256 digest
 on both downloads and cache hits, checks its version, and adds its binary directory to PATH.
 The installer checks the Ubuntu 24.04 runner's Linux architecture and glibc version.
-The old Ubuntu package (Z3 4.8.12) timed out on a previously verified harness in the first
-hosted run; changing the solver does not establish that the timeout is resolved.
-A local PATH wrapper bounds each Z3 process too, and
+The old Ubuntu package (Z3 4.8.12) timed out on `boxed_square_wide_64` with forced32 in
+the first hosted run. With Z3 5.3.1, that proof passes in 25.421 seconds and its shard
+passes all 85 selected harnesses in run `40184650379`.
+A local PATH wrapper bounds each Z3 process's time and virtual memory (`-memory:4096`, MB), and
 the runner kills the verifier process group after a run to clean up remaining solver children.
+The memory cap leaves headroom for CBMC and the runner; it does not cap their own memory.
+Resource exhaustion is an unproved failure, never a reason to skip a proof.
+The runner streams harness names, verification outcomes, CBMC failures, and timings to the
+job console while preserving its full log. A repeated hosted-runner shutdown has not yet
+established which process or resource caused it; the streamed names help diagnose the next run.
+Each run also prints one host snapshot: CPU count, physical RAM and free disk bytes, and the
+Linux cgroup `memory.max` value when available. These readings are diagnostic context.
 No global external SMT argument is passed to CaDiCaL. Default memory, overflow, assertion,
 and unwinding checks remain enabled. Exit status, exact harness coverage, result statuses,
 error details, and summary counts must all indicate success. Missing JSON is a failure.
