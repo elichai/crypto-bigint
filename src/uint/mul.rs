@@ -543,8 +543,10 @@ mod kani_proofs {
 
     /// Wide multiplication agrees with the exact native product for all 64-bit operands.
     /// Separate wide, wrapping, and overflow properties to keep their solver circuits independent.
+    // CaDiCaL avoids the forced32 Z3 timeout; keep Z3 for 64-bit words.
     #[kani::proof]
-    #[kani::solver(z3)]
+    #[cfg_attr(cpubits = "32", kani::solver(cadical))]
+    #[cfg_attr(not(cpubits = "32"), kani::solver(z3))]
     #[kani::unwind(5)]
     fn uint_mul_u64_correct() {
         let (a, b): (u64, u64) = kani::any();
