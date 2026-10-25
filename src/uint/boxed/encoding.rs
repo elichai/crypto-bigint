@@ -309,6 +309,18 @@ mod kani_proofs {
     use crate::uint::boxed::kani_util::{L64, any_boxed, value};
     use crate::{BoxedUint, DecodeError};
 
+    /// FINDINGS 1.9 / upstream #1382: decimal zero has storage and supports bit-width queries.
+    // Radix setup computes Word::MAX.ilog(10), which needs 19 iterations for Word64.
+    #[kani::proof]
+    #[kani::unwind(20)]
+    fn boxed_parse_zero_has_precision() {
+        let zero = BoxedUint::from_str_radix_vartime("0", 10).unwrap();
+        assert_eq!(zero.nlimbs(), 1);
+        assert_eq!(zero.bits_precision(), crate::Word::BITS);
+        assert!(zero.is_zero().to_bool());
+        assert_eq!(zero.bit_width_vartime(), 0);
+    }
+
     // Separate byte orders to halve the heap-decoder formula without restricting input values.
     #[kani::proof]
     #[kani::unwind(21)]

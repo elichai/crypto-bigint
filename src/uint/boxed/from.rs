@@ -179,15 +179,46 @@ mod kani_proofs {
         word_vec_capacity::<N, 2>();
     }
 
-    /// Exercise the unsafe ownership cast at lengths 0..4, with 0..2 spare capacity.
-    // Symbolic lengths or capacities timed out; concrete calls retain all 15 size combinations.
+    // Separate allocation cases reduce allocator/lifetime formulas while retaining all 15 cases.
     #[kani::proof]
     #[kani::unwind(8)]
-    fn boxed_from_word_vec() {
-        word_vec::<0>();
+    fn boxed_from_word_vec_len0_spare0() {
+        word_vec_capacity::<0, 0>();
+    }
+
+    #[kani::proof]
+    #[kani::unwind(8)]
+    fn boxed_from_word_vec_len0_spare1() {
+        word_vec_capacity::<0, 1>();
+    }
+
+    #[kani::proof]
+    #[kani::unwind(8)]
+    fn boxed_from_word_vec_len0_spare2() {
+        word_vec_capacity::<0, 2>();
+    }
+
+    #[kani::proof]
+    #[kani::unwind(8)]
+    fn boxed_from_word_vec_len1() {
         word_vec::<1>();
+    }
+
+    #[kani::proof]
+    #[kani::unwind(8)]
+    fn boxed_from_word_vec_len2() {
         word_vec::<2>();
+    }
+
+    #[kani::proof]
+    #[kani::unwind(8)]
+    fn boxed_from_word_vec_len3() {
         word_vec::<3>();
+    }
+
+    #[kani::proof]
+    #[kani::unwind(8)]
+    fn boxed_from_word_vec_len4() {
         word_vec::<4>();
     }
 

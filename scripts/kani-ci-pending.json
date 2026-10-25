@@ -22,12 +22,12 @@
   {
     "harness": "uint::boxed::gcd::kani_proofs::boxed_gcd_vartime_zero_narrow_rhs",
     "words": [32, 64],
-    "reason": "Unproved timeout: boxed GCD with zero left operand and narrower right storage."
+    "reason": "Unproved timeout: boxed GCD with zero right operand and narrower right storage."
   },
   {
     "harness": "uint::boxed::gcd::kani_proofs::boxed_gcd_vartime_zero_wide_rhs",
     "words": [32, 64],
-    "reason": "Unproved timeout: boxed GCD with zero left operand and wider right storage."
+    "reason": "Unproved timeout: boxed GCD with zero right operand and wider right storage."
   },
   {
     "harness": "uint::boxed::invert_mod::kani_proofs::boxed_invert_mod2k_vartime_out_of_range",

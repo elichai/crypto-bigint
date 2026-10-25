@@ -214,6 +214,7 @@ mod tests {
 #[cfg(kani)]
 mod kani_proofs {
     use super::*;
+    use crate::primitives::{borrowing_sub, leading_zeros, overflowing_add, trailing_zeros};
 
     #[kani::proof]
     fn choice_from_cmp_correct() {
@@ -248,22 +249,24 @@ mod kani_proofs {
     #[kani::proof]
     fn word_arithmetic_and_bit_counts_correct() {
         let (a, b, flag): (Word, Word, bool) = kani::any();
-        let choice = if flag { Choice::TRUE } else { Choice::FALSE };
         let subtrahend = WideWord::from(b) + WideWord::from(flag);
-        let (difference, borrow) = borrowing_sub(a, b, choice);
+        let (difference, borrow) = borrowing_sub(a, b, Word::from(flag).wrapping_neg());
         assert_eq!(
             difference,
             WideWord::from(a).wrapping_sub(subtrahend) as Word
         );
-        assert_eq!(borrow.to_bool(), WideWord::from(a) < subtrahend);
+        assert_eq!(
+            borrow,
+            Word::from(WideWord::from(a) < subtrahend).wrapping_neg()
+        );
         assert_eq!(leading_zeros(a), a.leading_zeros());
         assert_eq!(trailing_zeros(a), a.trailing_zeros());
 
-        let (x, y): (WideWord, WideWord) = kani::any();
-        let (sum, overflow) = overflowing_add_wide(x, y);
+        let (x, y): (Word, Word) = kani::any();
+        let (sum, overflow) = overflowing_add(x, y);
         let expected = x.overflowing_add(y);
         assert_eq!(sum, expected.0);
-        assert_eq!(overflow.to_bool(), expected.1);
+        assert_eq!(overflow, Word::from(expected.1));
     }
 
     #[kani::proof]

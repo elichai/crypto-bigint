@@ -314,7 +314,7 @@ mod kani_proofs {
         let trailing_ones = n.trailing_ones().min(bits);
         let bit = index < bits && (n >> index) & 1 != 0;
         assert_eq!(x.bits_precision(), bits);
-        assert_eq!(x.bits(), bit_length);
+        assert_eq!(x.bit_width(), bit_length);
         assert_eq!(x.leading_zeros(), bits - bit_length);
         assert_eq!(x.trailing_zeros(), trailing_zeroes);
         assert_eq!(x.trailing_zeros_vartime(), trailing_zeroes);
@@ -323,11 +323,11 @@ mod kani_proofs {
         assert_eq!(x.bit(index).to_bool(), bit);
         assert_eq!(x.bit_vartime(index), bit);
         assert_eq!(BitOps::bytes_precision(x), len * Limb::BYTES);
-        assert_eq!(BitOps::bits(x), bit_length);
-        // bits_vartime panics on an empty view; see its regression.
+        assert_eq!(BitOps::bit_width(x), bit_length);
+        // bit_width_vartime panics on an empty view; see its regression.
         if len > 0 {
-            assert_eq!(x.bits_vartime(), bit_length);
-            assert_eq!(BitOps::bits_vartime(x), bit_length);
+            assert_eq!(x.bit_width_vartime(), bit_length);
+            assert_eq!(BitOps::bit_width_vartime(x), bit_length);
         }
     }
 

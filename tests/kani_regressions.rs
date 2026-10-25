@@ -11,7 +11,7 @@ use crypto_bigint::{Encoding, I128, Limb, Uint, UintRef, Word, Wrapping};
 #[kani::proof]
 #[kani::unwind(3)]
 fn regression_uint_ref_empty_bit_length() {
-    assert_eq!(UintRef::new(&[]).bits_vartime(), 0);
+    assert_eq!(UintRef::new(&[]).bit_width_vartime(), 0);
 }
 
 #[kani::proof]
@@ -39,7 +39,7 @@ fn regression_uint_ref_empty_overflowing_shr() {
 fn regression_uint_ref_empty_unbounded_shl() {
     let mut empty = [];
     UintRef::new_mut(&mut empty).unbounded_shl_assign(0);
-    assert_eq!(UintRef::new(&empty).bits(), 0);
+    assert_eq!(UintRef::new(&empty).bit_width(), 0);
 }
 
 #[kani::proof]
@@ -47,19 +47,18 @@ fn regression_uint_ref_empty_unbounded_shl() {
 fn regression_uint_ref_empty_unbounded_shr() {
     let mut empty = [];
     UintRef::new_mut(&mut empty).unbounded_shr_assign(0);
-    assert_eq!(UintRef::new(&empty).bits(), 0);
+    assert_eq!(UintRef::new(&empty).bit_width(), 0);
 }
 
-/// Nonzero residue classes can multiply to zero for a composite modulus.
+/// FINDINGS 1.22: One must not bypass the NonZero invariant for the zero ring.
 #[kani::proof]
 #[kani::unwind(5)]
-fn regression_nonzero_modular_product_preserves_invariant() {
-    use crypto_bigint::{NonZero, U64, modular::ConstMontyForm};
-    crypto_bigint::const_monty_params!(Modulus15, U64, "000000000000000f");
-    type Form = ConstMontyForm<Modulus15, { U64::LIMBS }>;
-    let three = NonZero::new(Form::new(&U64::from_u8(3))).unwrap();
-    let five = NonZero::new(Form::new(&U64::from_u8(5))).unwrap();
-    assert!((three * five).as_ref().retrieve() != U64::ZERO);
+fn regression_nonzero_modular_one_preserves_invariant() {
+    use crypto_bigint::{NonZero, One, U64, modular::ConstMontyForm};
+    crypto_bigint::const_monty_params!(ModulusOne, U64, "0000000000000001");
+    type Form = ConstMontyForm<ModulusOne, { U64::LIMBS }>;
+    let one = <NonZero<Form> as One>::one();
+    assert!(NonZero::new(*one.as_ref()).is_some().to_bool());
 }
 
 /// Smaller precision is documented; short-input padding is the behavior of the Uint overrides.
@@ -264,14 +263,5 @@ mod boxed {
             BoxedUint::from_le_slice(&[2], 1),
             Err(crypto_bigint::DecodeError::Precision)
         );
-    }
-
-    /// FINDINGS 1.9: a parsed zero must have a limb before it enters arithmetic.
-    #[kani::proof]
-    #[kani::unwind(20)]
-    fn regression_boxed_parse_zero_has_precision() {
-        let zero = BoxedUint::from_str_radix_vartime("0", 10).unwrap();
-        assert!(zero.nlimbs() >= 1);
-        assert!(zero.is_zero().to_bool());
     }
 }

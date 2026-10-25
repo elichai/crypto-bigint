@@ -443,6 +443,18 @@ mod kani_proofs {
         assert_eq!(usize_lt(a, b).to_bool(), a < b);
     }
 
+    /// Exercise the software fallback directly, including zero, on native-instruction hosts.
+    #[kani::proof]
+    #[kani::unwind(6)]
+    fn leading_zeros_u32_soft_correct() {
+        let value: u32 = kani::any();
+        assert_eq!(leading_zeros_u32_soft(value), value.leading_zeros());
+        assert_eq!(
+            leading_zeros_u32_soft(value.reverse_bits()),
+            value.trailing_zeros()
+        );
+    }
+
     /// Lemire's remainder is exact for every `n` and every multiple-of-32 divisor up to 4096.
     /// This bounds the caller precision domain; larger precisions are not covered here.
     /// Concrete divisors let CBMC fold reciprocals, but non-power-of-two cases remain expensive.

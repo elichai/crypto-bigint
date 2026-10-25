@@ -315,13 +315,27 @@ mod kani_proofs {
         let mut i = 0;
         while i < U64::LIMBS {
             let xi = u128::from(x >> (i as u32 * w)) & digit_mask;
-            let ui = ((a + xi * u128::from(y)) & digit_mask) * u128::from(mod_neg_inv) & digit_mask;
-            // `a + xi·y + ui·m < 2^129`; keep the carry bit across the shift.
-            let (t, carry) = (a + xi * u128::from(y)).overflowing_add(ui * u128::from(m));
-            a = (t >> w) | (u128::from(carry) << (u128::BITS - w));
+            let p = a + xi * u128::from(y);
+            let ui = (p as Word).wrapping_mul(mod_neg_inv);
+            let q = u128::from(ui) * u128::from(m);
+            // Split the native sum to share FIOS product circuits; the separate lemma checks carry.
+            // Word64 p,q are products; Word32 p < 2^97. Their shifted sum fits in u128.
+            let (_, carry) = (p as Word).overflowing_add(q as Word);
+            a = (p >> w) + (q >> w) + u128::from(carry);
             i += 1;
         }
         a
+    }
+
+    /// Discard one low word from a 129-bit sum without losing its extra carry bit.
+    #[kani::proof]
+    fn montgomery_addition_decomposition() {
+        let (a, b): (u128, u128) = kani::any();
+        let (_, carry) = (a as Word).overflowing_add(b as Word);
+        let decomposed = (a >> Word::BITS) + (b >> Word::BITS) + u128::from(carry);
+        let (sum, overflow) = a.overflowing_add(b);
+        let expected = (sum >> Word::BITS) | (u128::from(overflow) << (u128::BITS - Word::BITS));
+        assert_eq!(decomposed, expected);
     }
 
     /// The FIOS implementation computes exactly the textbook Montgomery product, for all

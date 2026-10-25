@@ -348,8 +348,8 @@ mod kani_proofs {
         assert_eq!(ua.bit_vartime(index), bit);
 
         let bits = U128::BITS - a.leading_zeros();
-        assert_eq!(ua.bits(), bits);
-        assert_eq!(ua.bits_vartime(), bits);
+        assert_eq!(ua.bit_width(), bits);
+        assert_eq!(ua.bit_width_vartime(), bits);
         assert_eq!(ua.leading_zeros(), a.leading_zeros());
         assert_eq!(ua.leading_zeros_vartime(), a.leading_zeros());
         assert_eq!(ua.trailing_zeros(), a.trailing_zeros());

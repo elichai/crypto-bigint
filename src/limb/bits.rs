@@ -303,7 +303,7 @@ mod kani_proofs {
     #[kani::proof]
     fn limb_bit_counts_correct() {
         let x: Word = kani::any();
-        assert_eq!(Limb(x).bits(), Word::BITS - x.leading_zeros());
+        assert_eq!(Limb(x).bit_width(), Word::BITS - x.leading_zeros());
         assert_eq!(Limb(x).leading_zeros(), x.leading_zeros());
         assert_eq!(Limb(x).trailing_zeros(), x.trailing_zeros());
         assert_eq!(Limb(x).trailing_ones(), x.trailing_ones());

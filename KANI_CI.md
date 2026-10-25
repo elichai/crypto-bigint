@@ -26,8 +26,8 @@ the runner kills the verifier process group after a run to clean up remaining so
 The memory cap leaves headroom for CBMC and the runner; it does not cap their own memory.
 Resource exhaustion is an unproved failure, never a reason to skip a proof.
 The runner streams harness names, verification outcomes, CBMC failures, and timings to the
-job console while preserving its full log. A repeated hosted-runner shutdown has not yet
-established which process or resource caused it; the streamed names help diagnose the next run.
+job console while preserving its full log. Streamed names remain in the Actions log if a
+runner shutdown prevents artifact upload. See `KANI_PLAN.md` for the validation history.
 Each run also prints one host snapshot: CPU count, physical RAM and free disk bytes, and the
 Linux cgroup `memory.max` value when available. These readings are diagnostic context.
 No global external SMT argument is passed to CaDiCaL. Default memory, overflow, assertion,

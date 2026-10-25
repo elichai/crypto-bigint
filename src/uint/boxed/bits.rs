@@ -179,8 +179,8 @@ mod kani_proofs {
         assert_eq!(a.bit(index).to_bool(), expected);
         assert_eq!(a.bit_vartime(index), expected);
         assert_eq!(a.leading_zeros(), n.leading_zeros());
-        assert_eq!(a.bits(), 128 - n.leading_zeros());
-        assert_eq!(a.bits_vartime(), 128 - n.leading_zeros());
+        assert_eq!(a.bit_width(), 128 - n.leading_zeros());
+        assert_eq!(a.bit_width_vartime(), 128 - n.leading_zeros());
         assert_eq!(a.trailing_zeros(), n.trailing_zeros());
         assert_eq!(a.trailing_zeros_vartime(), n.trailing_zeros());
         assert_eq!(a.trailing_ones(), n.trailing_ones());
