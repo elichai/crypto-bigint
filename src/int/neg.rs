@@ -126,3 +126,25 @@ mod tests {
         );
     }
 }
+
+#[cfg(kani)]
+mod kani_proofs {
+    use crate::{Choice, I128};
+
+    #[kani::proof]
+    fn int_neg_correct() {
+        let (x, flag): (i128, bool) = kani::any();
+        let ix = I128::from_i128(x);
+
+        let (neg, overflow) = ix.overflowing_neg();
+        assert_eq!((i128::from(neg), overflow.to_bool()), x.overflowing_neg());
+        assert_eq!(i128::from(ix.wrapping_neg()), x.wrapping_neg());
+        assert_eq!(
+            Option::<I128>::from(ix.checked_neg()).map(i128::from),
+            x.checked_neg()
+        );
+        let choice = if flag { Choice::TRUE } else { Choice::FALSE };
+        let expected = if flag { x.wrapping_neg() } else { x };
+        assert_eq!(i128::from(ix.wrapping_neg_if(choice)), expected);
+    }
+}

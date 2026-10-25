@@ -144,6 +144,111 @@ impl BitOps for BoxedUint {
     }
 }
 
+#[cfg(kani)]
+mod kani_proofs {
+    use crate::uint::boxed::kani_util::{L64, any_boxed, value};
+    use crate::{Choice, Resize};
+
+    /// Bit access and bit counts agree with the 128-bit binary representation.
+    #[kani::proof]
+    #[kani::unwind(5)]
+    fn boxed_bit_queries_correct() {
+        let a = any_boxed::<{ 2 * L64 }>();
+        let n = value(&a);
+        let index: u32 = kani::any();
+        let expected = index < 128 && (n >> index) & 1 != 0;
+        assert_eq!(a.bit(index).to_bool(), expected);
+        assert_eq!(a.bit_vartime(index), expected);
+        assert_eq!(a.leading_zeros(), n.leading_zeros());
+        assert_eq!(a.bits(), 128 - n.leading_zeros());
+        assert_eq!(a.bits_vartime(), 128 - n.leading_zeros());
+        assert_eq!(a.trailing_zeros(), n.trailing_zeros());
+        assert_eq!(a.trailing_zeros_vartime(), n.trailing_zeros());
+        assert_eq!(a.trailing_ones(), n.trailing_ones());
+        assert_eq!(a.trailing_ones_vartime(), n.trailing_ones());
+    }
+
+    #[kani::proof]
+    #[kani::unwind(5)]
+    fn boxed_set_bit_correct() {
+        let mut a = any_boxed::<{ 2 * L64 }>();
+        let n = value(&a);
+        let index: u32 = kani::any();
+        let bit: bool = kani::any();
+        let expected = if index >= 128 {
+            n
+        } else if bit {
+            n | (1u128 << index)
+        } else {
+            n & !(1u128 << index)
+        };
+        let mut b = a.clone();
+        a.set_bit(index, if bit { Choice::TRUE } else { Choice::FALSE });
+        assert_eq!(value(&a), expected);
+        assert_eq!(a.bits_precision(), 128);
+        // The variable-time setter requires an in-range index.
+        if index < 128 {
+            b.set_bit_vartime(index, bit);
+            assert_eq!(value(&b), expected);
+        }
+    }
+
+    /// Restriction keeps exactly the low `len` bits, including zero and out-of-range lengths.
+    #[kani::proof]
+    #[kani::unwind(5)]
+    fn boxed_restrict_bits_correct() {
+        let mut a = any_boxed::<{ 2 * L64 }>();
+        let n = value(&a);
+        let len: u32 = kani::any();
+        let expected = if len >= 128 {
+            n
+        } else {
+            n & ((1u128 << len) - 1)
+        };
+        a.restrict_bits(len);
+        assert_eq!(value(&a), expected);
+        assert_eq!(a.bits_precision(), 128);
+    }
+
+    #[kani::proof]
+    #[kani::unwind(5)]
+    fn boxed_resize_correct() {
+        let a = any_boxed::<{ 2 * L64 }>();
+        let n = value(&a);
+        let truncated = (&a).resize_unchecked(64);
+        assert_eq!(
+            (value(&truncated), truncated.bits_precision()),
+            (n & u128::from(u64::MAX), 64)
+        );
+        let owned = a.clone().resize_unchecked(64);
+        assert_eq!(
+            (value(&owned), owned.bits_precision()),
+            (n & u128::from(u64::MAX), 64)
+        );
+        assert_eq!(
+            (&a).try_resize(64).map(|r| value(&r)),
+            if n <= u128::from(u64::MAX) {
+                Some(n)
+            } else {
+                None
+            }
+        );
+        assert_eq!(
+            a.try_resize(64).map(|r| value(&r)),
+            if n <= u128::from(u64::MAX) {
+                Some(n)
+            } else {
+                None
+            }
+        );
+        let grown = truncated.resize_unchecked(128);
+        assert_eq!(
+            (value(&grown), grown.bits_precision()),
+            (n & u128::from(u64::MAX), 128)
+        );
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::BoxedUint;

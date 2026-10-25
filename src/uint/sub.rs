@@ -167,3 +167,29 @@ mod tests {
         assert!(!bool::from(result.is_some()));
     }
 }
+
+#[cfg(kani)]
+mod kani_proofs {
+    use crate::{CheckedSub, Limb, U128, Word};
+
+    /// `U128` subtraction agrees with `u128`, for a mask borrow-in (0 or `Word::MAX`).
+    #[kani::proof]
+    fn uint_sub_correct() {
+        let (a, b, borrow_in): (u128, u128, bool) = kani::any();
+        let (ua, ub) = (U128::from_u128(a), U128::from_u128(b));
+
+        let (d1, o1) = a.overflowing_sub(b);
+        let (diff, o2) = d1.overflowing_sub(u128::from(borrow_in));
+        let borrow = if borrow_in { Word::MAX } else { 0 };
+        let (res, borrow_out) = ua.borrowing_sub(&ub, Limb(borrow));
+        assert_eq!(u128::from(res), diff);
+        assert_eq!(borrow_out.0, if o1 || o2 { Word::MAX } else { 0 });
+
+        assert_eq!(u128::from(ua.wrapping_sub(&ub)), a.wrapping_sub(b));
+        assert_eq!(u128::from(ua.saturating_sub(&ub)), a.saturating_sub(b));
+        assert_eq!(
+            Option::<U128>::from(ua.checked_sub(&ub)).map(u128::from),
+            a.checked_sub(b)
+        );
+    }
+}

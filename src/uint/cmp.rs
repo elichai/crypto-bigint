@@ -191,3 +191,28 @@ mod tests {
         assert_eq!(b, Uint::ZERO);
     }
 }
+
+#[cfg(kani)]
+mod kani_proofs {
+    use crate::{CtEq, CtGt, CtLt, U128, Uint};
+
+    /// Same-width comparisons agree with `u128`.
+    #[kani::proof]
+    #[kani::unwind(5)]
+    fn uint_cmp_correct() {
+        let (a, b): (u128, u128) = kani::any();
+        let (ua, ub) = (U128::from_u128(a), U128::from_u128(b));
+
+        assert_eq!(ua.cmp(&ub), a.cmp(&b));
+        assert_eq!(ua.cmp_vartime(&ub), a.cmp(&b));
+        assert_eq!(ua == ub, a == b);
+        assert_eq!(Uint::eq(&ua, &ub).to_bool(), a == b);
+        assert_eq!(ua.ct_eq(&ub).to_bool(), a == b);
+        assert_eq!(ua.ct_lt(&ub).to_bool(), a < b);
+        assert_eq!(ua.ct_gt(&ub).to_bool(), a > b);
+        assert_eq!(Uint::lte(&ua, &ub).to_bool(), a <= b);
+        assert_eq!(ua.is_nonzero().to_bool(), a != 0);
+        assert_eq!(ua.is_zero_vartime(), a == 0);
+        assert_eq!(ua.is_odd().to_bool(), a & 1 == 1);
+    }
+}

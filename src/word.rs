@@ -224,3 +224,84 @@ mod tests {
         assert_eq!(super::select_wide(a, b, Choice::TRUE), b);
     }
 }
+
+#[cfg(kani)]
+mod kani_proofs {
+    use super::*;
+
+    #[kani::proof]
+    fn choice_from_cmp_correct() {
+        let (x, y): (Word, Word) = kani::any();
+        assert_eq!(choice_from_lt(x, y).to_bool(), x < y);
+        assert_eq!(choice_from_le(x, y).to_bool(), x <= y);
+        assert_eq!(choice_from_gt(x, y).to_bool(), x > y);
+        assert_eq!(choice_from_eq(x, y).to_bool(), x == y);
+    }
+
+    #[kani::proof]
+    fn choice_from_wide_cmp_correct() {
+        let (x, y): (WideWord, WideWord) = kani::any();
+        assert_eq!(choice_from_wide_lt(x, y).to_bool(), x < y);
+        assert_eq!(choice_from_wide_le(x, y).to_bool(), x <= y);
+        assert_eq!(choice_from_wide_eq(x, y).to_bool(), x == y);
+    }
+
+    #[kani::proof]
+    fn choice_from_bits_correct() {
+        let value: Word = kani::any();
+        assert_eq!(choice_from_lsb(value).to_bool(), value & 1 == 1);
+        assert_eq!(
+            choice_from_msb(value).to_bool(),
+            value >> (Word::BITS - 1) == 1
+        );
+        assert_eq!(choice_from_nz(value).to_bool(), value != 0);
+        assert_eq!(choice_from_mask(value).to_bool(), value == Word::MAX);
+    }
+
+    /// Checks the primitives used by the upstream constant-time fixes against native arithmetic.
+    #[kani::proof]
+    fn word_arithmetic_and_bit_counts_correct() {
+        let (a, b, flag): (Word, Word, bool) = kani::any();
+        let choice = if flag { Choice::TRUE } else { Choice::FALSE };
+        let subtrahend = WideWord::from(b) + WideWord::from(flag);
+        let (difference, borrow) = borrowing_sub(a, b, choice);
+        assert_eq!(
+            difference,
+            WideWord::from(a).wrapping_sub(subtrahend) as Word
+        );
+        assert_eq!(borrow.to_bool(), WideWord::from(a) < subtrahend);
+        assert_eq!(leading_zeros(a), a.leading_zeros());
+        assert_eq!(trailing_zeros(a), a.trailing_zeros());
+
+        let (x, y): (WideWord, WideWord) = kani::any();
+        let (sum, overflow) = overflowing_add_wide(x, y);
+        let expected = x.overflowing_add(y);
+        assert_eq!(sum, expected.0);
+        assert_eq!(overflow.to_bool(), expected.1);
+    }
+
+    #[kani::proof]
+    fn select_and_mask_correct() {
+        let flag: bool = kani::any();
+        let choice = if flag { Choice::TRUE } else { Choice::FALSE };
+
+        let (a, b): (Word, Word) = kani::any();
+        assert_eq!(select(a, b, choice), if flag { b } else { a });
+        assert_eq!(choice_to_mask(choice), if flag { Word::MAX } else { 0 });
+
+        let (a, b): (WideWord, WideWord) = kani::any();
+        assert_eq!(select_wide(a, b, choice), if flag { b } else { a });
+        assert_eq!(
+            choice_to_wide_mask(choice),
+            if flag { WideWord::MAX } else { 0 }
+        );
+    }
+
+    #[kani::proof]
+    fn join_split_wide_roundtrip() {
+        let (lo, hi): (Word, Word) = kani::any();
+        let wide = join(lo, hi);
+        assert_eq!(wide, (hi as WideWord) * (1 << Word::BITS) + lo as WideWord);
+        assert_eq!(split_wide(wide), (lo, hi));
+    }
+}

@@ -324,3 +324,65 @@ mod tests {
         assert!(overflow.to_bool());
     }
 }
+
+#[cfg(kani)]
+mod kani_proofs {
+    use crate::{Checked, I128, Wrapping};
+
+    #[kani::proof]
+    fn int_add_correct() {
+        let (a, b): (i128, i128) = kani::any();
+        let (ia, ib) = (I128::from_i128(a), I128::from_i128(b));
+
+        let (sum, overflow) = ia.overflowing_add(&ib);
+        assert_eq!((i128::from(sum), overflow.to_bool()), a.overflowing_add(b));
+        assert_eq!(i128::from(ia.wrapping_add(&ib)), a.wrapping_add(b));
+        assert_eq!(
+            Option::<I128>::from(ia.checked_add(&ib)).map(i128::from),
+            a.checked_add(b)
+        );
+    }
+
+    #[kani::proof]
+    #[kani::unwind(5)]
+    fn int_add_wrappers_native() {
+        let (a, b): (i128, i128) = kani::any();
+        let (ia, ib) = (I128::from_i128(a), I128::from_i128(b));
+        let mut wrapped = Wrapping(ia);
+        wrapped += Wrapping(ib);
+        assert_eq!(i128::from(wrapped.0), a.wrapping_add(b));
+        wrapped = Wrapping(ia);
+        wrapped += &Wrapping(ib);
+        assert_eq!(i128::from(wrapped.0), a.wrapping_add(b));
+        let mut checked = Checked::new(ia);
+        checked += Checked::new(ib);
+        assert_eq!(
+            Option::<I128>::from(checked).map(i128::from),
+            a.checked_add(b)
+        );
+        checked = Checked::new(ia);
+        checked += &Checked::new(ib);
+        assert_eq!(
+            Option::<I128>::from(checked).map(i128::from),
+            a.checked_add(b)
+        );
+    }
+
+    #[kani::proof]
+    #[kani::unwind(5)]
+    fn int_add_operators_native() {
+        let (a, b): (i128, i128) = kani::any();
+        let Some(expected) = a.checked_add(b) else {
+            return;
+        };
+        let (ia, ib) = (I128::from_i128(a), I128::from_i128(b));
+        assert_eq!(i128::from(ia + ib), expected);
+        assert_eq!(i128::from(ia + &ib), expected);
+        let mut assigned = ia;
+        assigned += ib;
+        assert_eq!(i128::from(assigned), expected);
+        assigned = ia;
+        assigned += &ib;
+        assert_eq!(i128::from(assigned), expected);
+    }
+}

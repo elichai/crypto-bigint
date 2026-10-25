@@ -485,6 +485,104 @@ where
     }
 }
 
+#[cfg(kani)]
+#[allow(clippy::op_ref)]
+mod kani_proofs {
+    use crate::{Choice, CtEq, CtSelect, Limb, Word, Wrapping};
+
+    #[kani::proof]
+    fn wrapping_add_sub_neg_native() {
+        let (a, b): (Word, Word) = kani::any();
+        let (wa, wb) = (Wrapping(Limb(a)), Wrapping(Limb(b)));
+        assert_eq!((wa + wb).0.0, a.wrapping_add(b));
+        assert_eq!((&wa + wb).0.0, a.wrapping_add(b));
+        assert_eq!((wa + &wb).0.0, a.wrapping_add(b));
+        assert_eq!((&wa + &wb).0.0, a.wrapping_add(b));
+        assert_eq!((wa - wb).0.0, a.wrapping_sub(b));
+        assert_eq!((&wa - wb).0.0, a.wrapping_sub(b));
+        assert_eq!((wa - &wb).0.0, a.wrapping_sub(b));
+        assert_eq!((&wa - &wb).0.0, a.wrapping_sub(b));
+        assert_eq!((-wa).0.0, a.wrapping_neg());
+        assert_eq!((-&wa).0.0, a.wrapping_neg());
+    }
+
+    // Z3 proves the same full-word multiplication property in under a second.
+    #[kani::proof]
+    #[kani::solver(z3)]
+    fn wrapping_mul_native() {
+        let (a, b): (Word, Word) = kani::any();
+        let (wa, wb) = (Wrapping(Limb(a)), Wrapping(Limb(b)));
+        assert_eq!((wa * wb).0.0, a.wrapping_mul(b));
+        assert_eq!((&wa * wb).0.0, a.wrapping_mul(b));
+        assert_eq!((wa * &wb).0.0, a.wrapping_mul(b));
+        assert_eq!((&wa * &wb).0.0, a.wrapping_mul(b));
+    }
+
+    #[kani::proof]
+    fn wrapping_shifts_native() {
+        let (a, shift): (Word, u32) = kani::any();
+        let wa = Wrapping(Limb(a));
+        assert_eq!((wa << shift).0.0, a.wrapping_shl(shift));
+        assert_eq!((&wa << shift).0.0, a.wrapping_shl(shift));
+        assert_eq!((wa >> shift).0.0, a.wrapping_shr(shift));
+        assert_eq!((&wa >> shift).0.0, a.wrapping_shr(shift));
+    }
+
+    #[kani::proof]
+    fn wrapping_bitwise_native() {
+        let (a, b): (Word, Word) = kani::any();
+        let (wa, wb) = (Wrapping(Limb(a)), Wrapping(Limb(b)));
+        assert_eq!((wa & wb).0.0, a & b);
+        assert_eq!((&wa & wb).0.0, a & b);
+        assert_eq!((wa & &wb).0.0, a & b);
+        assert_eq!((&wa & &wb).0.0, a & b);
+        assert_eq!((wa | wb).0.0, a | b);
+        assert_eq!((&wa | wb).0.0, a | b);
+        assert_eq!((wa | &wb).0.0, a | b);
+        assert_eq!((&wa | &wb).0.0, a | b);
+        assert_eq!((wa ^ wb).0.0, a ^ b);
+        assert_eq!((&wa ^ wb).0.0, a ^ b);
+        assert_eq!((wa ^ &wb).0.0, a ^ b);
+        assert_eq!((&wa ^ &wb).0.0, a ^ b);
+        assert_eq!((!wa).0.0, !a);
+        assert_eq!((!&wa).0.0, !a);
+        let mut assigned = wa;
+        assigned &= wb;
+        assert_eq!(assigned.0.0, a & b);
+        assigned = wa;
+        assigned &= &wb;
+        assert_eq!(assigned.0.0, a & b);
+        assigned = wa;
+        assigned |= wb;
+        assert_eq!(assigned.0.0, a | b);
+        assigned = wa;
+        assigned |= &wb;
+        assert_eq!(assigned.0.0, a | b);
+        assigned = wa;
+        assigned ^= wb;
+        assert_eq!(assigned.0.0, a ^ b);
+        assigned = wa;
+        assigned ^= &wb;
+        assert_eq!(assigned.0.0, a ^ b);
+    }
+
+    #[kani::proof]
+    fn wrapping_eq_select_constants_native() {
+        let (a, b, flag): (Word, Word, bool) = kani::any();
+        let (wa, wb) = (Wrapping(Limb(a)), Wrapping(Limb(b)));
+        assert_eq!(wa.ct_eq(&wb).to_bool(), a == b);
+        assert_eq!(
+            wa.ct_select(&wb, Choice::from_u8_lsb(flag as u8)).0.0,
+            if flag { b } else { a }
+        );
+        assert_eq!(Wrapping::<Limb>::default().0, Limb::ZERO);
+        assert_eq!(<Wrapping<Limb> as crate::Zero>::zero().0, Limb::ZERO);
+        assert_eq!(<Wrapping<Limb> as crate::One>::one().0, Limb::ONE);
+        assert_eq!(<Wrapping<Limb> as num_traits::Zero>::zero().0, Limb::ZERO);
+        assert_eq!(<Wrapping<Limb> as num_traits::One>::one().0, Limb::ONE);
+    }
+}
+
 #[cfg(test)]
 #[allow(clippy::op_ref)]
 mod tests {

@@ -220,3 +220,64 @@ mod tests {
         }
     }
 }
+
+#[cfg(kani)]
+mod kani_proofs {
+    use crate::{Limb, NonZero, U128, Word};
+
+    /// For `carry <= 1`, subtracts `rhs` from the 129-bit value `(self, carry)` if that does not
+    /// wrap, and leaves it unchanged otherwise.
+    #[kani::proof]
+    fn uint_try_sub_with_carry_correct() {
+        let (a, carry, rhs): (u128, bool, u128) = kani::any();
+        let (res, carry_out) =
+            U128::from_u128(a).try_sub_with_carry(Limb(Word::from(carry)), &U128::from_u128(rhs));
+
+        let (diff, borrow) = a.overflowing_sub(rhs);
+        let expected = if carry || !borrow { diff } else { a };
+        assert_eq!(u128::from(res), expected);
+        assert_eq!(carry_out.0, Word::from(carry && !borrow));
+    }
+
+    /// For `a - b` in `[-p, p)` (the documented precondition), `sub_mod` returns `(a - b) mod p`.
+    #[kani::proof]
+    fn uint_sub_mod_correct() {
+        let (a, b, p): (u128, u128, u128) = kani::any();
+        kani::assume(p != 0);
+        let in_range = if a >= b { a - b < p } else { b - a <= p };
+        kani::assume(in_range);
+
+        let expected = if a >= b { a - b } else { p - (b - a) };
+        let p_nz = NonZero::new(U128::from_u128(p)).unwrap();
+        let res = U128::from_u128(a).sub_mod(&U128::from_u128(b), &p_nz);
+        assert_eq!(u128::from(res), expected);
+    }
+
+    /// For `p = 2^128 - c` (any single-limb `c`, including 0) and `a - b` in `[-p, p)`,
+    /// `sub_mod_special` returns `(a - b) mod p`, and `neg_mod_special` is the `a == 0` case.
+    #[kani::proof]
+    fn uint_sub_mod_special_correct() {
+        let (a, b, c): (u128, u128, Word) = kani::any();
+        // `p - 1` fits in a `u128` for every `c`, including `c == 0` (`p = 2^128`).
+        let p_minus_1 = u128::from(c).wrapping_neg().wrapping_sub(1);
+        let in_range = if a >= b {
+            a - b <= p_minus_1
+        } else {
+            b - a - 1 <= p_minus_1
+        };
+        kani::assume(in_range);
+
+        // For `a < b`, `a - b + p` reduced mod `2^128` is `a - b - c`.
+        let expected = a
+            .wrapping_sub(b)
+            .wrapping_sub(if a >= b { 0 } else { u128::from(c) });
+        let res = U128::from_u128(a).sub_mod_special(&U128::from_u128(b), Limb(c));
+        assert_eq!(u128::from(res), expected);
+        if a == 0 {
+            assert_eq!(
+                u128::from(U128::from_u128(b).neg_mod_special(Limb(c))),
+                expected
+            );
+        }
+    }
+}

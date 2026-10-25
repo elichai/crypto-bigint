@@ -182,6 +182,105 @@ impl InvertMod for BoxedUint {
     }
 }
 
+#[cfg(kani)]
+mod kani_proofs {
+    use crate::uint::boxed::kani_util::{L64, any_boxed, value};
+    use crate::{WideWord, Word};
+
+    fn check_wider_modulus_inverse<const VARTIME: bool>() {
+        use crate::BoxedUint;
+
+        let input = BoxedUint::from_words([3]);
+        let modulus = BoxedUint::from_words([Word::MAX, Word::MAX >> 1])
+            .to_odd()
+            .unwrap();
+        // For m = 2^(2W-1)-1, 3 * (WideWord::MAX / 3) = 2m + 1.
+        let expected = WideWord::MAX / 3;
+        let expected = BoxedUint::from_le_slice(&expected.to_le_bytes(), WideWord::BITS).unwrap();
+        assert_eq!(input.bits_precision(), Word::BITS);
+        assert_eq!(modulus.bits_precision(), WideWord::BITS);
+        let inverse = if VARTIME {
+            input.invert_odd_mod_vartime(&modulus)
+        } else {
+            input.invert_odd_mod(&modulus)
+        }
+        .unwrap();
+        assert_eq!(inverse.bits_precision(), modulus.bits_precision());
+        assert_eq!(inverse, expected);
+    }
+
+    /// FINDINGS 1.2: the original one-Word input and two-Word modulus retain the full inverse.
+    #[kani::proof]
+    #[kani::unwind(70)]
+    fn boxed_invert_odd_mod_ct_wider_modulus() {
+        check_wider_modulus_inverse::<false>();
+    }
+
+    /// The variable-time API must retain the same full inverse and modulus precision.
+    #[kani::proof]
+    #[kani::unwind(70)]
+    fn boxed_invert_odd_mod_vartime_wider_modulus() {
+        check_wider_modulus_inverse::<true>();
+    }
+
+    /// Every u64 input, with inverse existence and the unique canonical inverse modulo 256.
+    #[kani::proof]
+    #[kani::unwind(10)]
+    fn boxed_invert_mod2k_eight() {
+        let input = any_boxed::<L64>();
+        let n = value(&input) as u64;
+        for (result, present) in [input.invert_mod2k(8), input.invert_mod2k_vartime(8)] {
+            assert_eq!(result.bits_precision(), 64);
+            assert_eq!(present.to_bool(), n & 1 == 1);
+            if present.to_bool() {
+                let inverse = value(&result) as u64;
+                assert!(inverse < 256);
+                assert_eq!(n.wrapping_mul(inverse) & 255, 1);
+            }
+        }
+    }
+
+    /// Modulo 1, both APIs promise success and return the canonical residue zero.
+    #[kani::proof]
+    #[kani::unwind(10)]
+    fn boxed_invert_mod2k_zero() {
+        let input = any_boxed::<L64>();
+        for (result, present) in [input.invert_mod2k(0), input.invert_mod2k_vartime(0)] {
+            assert!(present.to_bool());
+            assert_eq!(result.bits_precision(), 64);
+            assert_eq!(value(&result), 0);
+        }
+    }
+
+    /// Every out-of-range u32 exponent is rejected; absent constant-time values are unspecified.
+    // Separate CT and VT paths: their conjunction timed out with both solvers.
+    #[kani::proof]
+    #[kani::unwind(10)]
+    fn boxed_invert_mod2k_ct_out_of_range() {
+        let input = any_boxed::<L64>();
+        let k: u32 = kani::any();
+        kani::assume(k > 64);
+        let (result, present) = input.invert_mod2k(k);
+        assert!(!present.to_bool());
+        assert_eq!(result.bits_precision(), 64);
+    }
+
+    /// The variable-time API also returns zero at the original precision on rejection.
+    #[kani::proof]
+    #[kani::unwind(10)]
+    fn boxed_invert_mod2k_vartime_out_of_range() {
+        let input = crate::BoxedUint::from(kani::any::<u64>());
+        let k: u32 = kani::any();
+        assert_eq!(input.bits_precision(), 64);
+        // Match the callee's guard; the checked precision keeps exactly the original k > 64 domain.
+        kani::assume(k > input.bits_precision());
+        let (result, present) = input.invert_mod2k_vartime(k);
+        assert!(!present.to_bool());
+        assert_eq!(result.bits_precision(), 64);
+        assert_eq!(value(&result), 0);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::{Limb, NonZero, Odd, Resize, U256};

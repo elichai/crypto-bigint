@@ -97,6 +97,50 @@ impl<const LIMBS: usize> BitAndAssign<&Uint<LIMBS>> for Uint<LIMBS> {
     }
 }
 
+#[cfg(kani)]
+mod kani_proofs {
+    use crate::{Limb, U128, Word};
+
+    #[kani::proof]
+    #[kani::unwind(5)]
+    fn uint_bitand_u128_correct() {
+        let (a, b): (u128, u128) = kani::any();
+        let (x, y) = (U128::from_u128(a), U128::from_u128(b));
+        let expected = a & b;
+        assert_eq!(u128::from(x.bitand(&y)), expected);
+        assert_eq!(u128::from(x.wrapping_and(&y)), expected);
+        assert_eq!(
+            Option::<U128>::from(x.checked_and(&y)).map(u128::from),
+            Some(expected)
+        );
+        assert_eq!(u128::from(x & y), expected);
+        assert_eq!(u128::from(x & &y), expected);
+        assert_eq!(u128::from(&x & y), expected);
+        assert_eq!(u128::from(&x & &y), expected);
+        let mut assigned = x;
+        assigned &= y;
+        assert_eq!(u128::from(assigned), expected);
+        assigned = x;
+        assigned &= &y;
+        assert_eq!(u128::from(assigned), expected);
+    }
+
+    #[kani::proof]
+    #[kani::unwind(5)]
+    fn uint_bitand_limb_u128_correct() {
+        let (a, mask): (u128, Word) = kani::any();
+        let mut repeated = u128::from(mask);
+        if Word::BITS == 32 {
+            repeated |= repeated << 32;
+        }
+        repeated |= repeated << 64;
+        assert_eq!(
+            u128::from(U128::from_u128(a).bitand_limb(Limb(mask))),
+            a & repeated
+        );
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::U128;

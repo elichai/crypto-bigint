@@ -358,3 +358,22 @@ mod tests {
         assert_eq!(arr1, arr2);
     }
 }
+
+#[cfg(kani)]
+mod kani_proofs {
+    use crate::{U64, U128, Word};
+
+    /// The native conversions are bijections. Later harnesses use them as the reference model.
+    #[kani::proof]
+    fn native_conversions_roundtrip() {
+        let x: u128 = kani::any();
+        assert_eq!(u128::from(U128::from_u128(x)), x);
+        let y = U128::from_words(kani::any());
+        assert_eq!(U128::from_u128(u128::from(y)), y);
+
+        let x: u64 = kani::any();
+        assert_eq!(u64::from(U64::from_u64(x)), x);
+        let y = U64::from_words(kani::any::<[Word; U64::LIMBS]>());
+        assert_eq!(U64::from_u64(u64::from(y)), y);
+    }
+}

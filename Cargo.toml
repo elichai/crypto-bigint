@@ -67,7 +67,10 @@ unused_qualifications = "warn"
 
 [lints.rust.unexpected_cfgs]
 level = "warn"
-check-cfg = ['cfg(cpubits, values("16", "32", "64"))']
+# Run Kani proofs with `RUSTFLAGS='--cfg miri' cargo kani`: Kani cannot model inline assembly,
+# and `cfg(miri)` selects the portable backend of `cmov` (used by `ctutils`).
+# Add `--cfg cpubits="32"` to check the 32-bit `Word` code.
+check-cfg = ['cfg(cpubits, values("16", "32", "64"))', 'cfg(kani)']
 
 [lints.clippy]
 borrow_as_ptr = "warn"

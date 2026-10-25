@@ -61,6 +61,52 @@ impl SubMod for BoxedUint {
     }
 }
 
+#[cfg(kani)]
+mod kani_proofs {
+    use crate::uint::boxed::kani_util::{L64, any_boxed, value};
+    use crate::{Limb, NonZero};
+
+    /// Reduced operands give `a - b` if nonnegative, or `p - (b - a)` otherwise.
+    #[kani::proof]
+    #[kani::unwind(5)]
+    fn boxed_sub_mod_correct() {
+        let (a, b, p) = (
+            any_boxed::<{ 2 * L64 }>(),
+            any_boxed::<{ 2 * L64 }>(),
+            any_boxed::<{ 2 * L64 }>(),
+        );
+        let (va, vb, vp) = (value(&a), value(&b), value(&p));
+        kani::assume(va < vp && vb < vp);
+        let expected = if va >= vb { va - vb } else { vp - (vb - va) };
+        let result = a.sub_mod(&b, &NonZero::new(p).unwrap());
+        assert_eq!((value(&result), result.bits_precision()), (expected, 128));
+        assert!(value(&result) < vp);
+    }
+
+    /// Special subtraction and negation reduce modulo `2^128 - c`, including `c = 0`.
+    #[kani::proof]
+    #[kani::unwind(5)]
+    fn boxed_sub_and_neg_mod_special_correct() {
+        let (a, b) = (any_boxed::<{ 2 * L64 }>(), any_boxed::<{ 2 * L64 }>());
+        let c: crate::Word = kani::any();
+        let p = 0u128.wrapping_sub(u128::from(c));
+        let p_minus_one = p.wrapping_sub(1);
+        let (va, vb) = (value(&a), value(&b));
+        kani::assume(va <= p_minus_one && vb <= p_minus_one);
+        let expected = if va >= vb {
+            va - vb
+        } else {
+            p.wrapping_sub(vb - va)
+        };
+        let result = a.sub_mod_special(&b, Limb(c));
+        assert_eq!((value(&result), result.bits_precision()), (expected, 128));
+        assert_eq!(
+            value(&a.neg_mod_special(Limb(c))),
+            if va == 0 { 0 } else { p.wrapping_sub(va) }
+        );
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::BoxedUint;

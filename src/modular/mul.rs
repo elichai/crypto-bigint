@@ -210,3 +210,51 @@ pub(crate) const fn square_repeat_montgomery_form<const LIMBS: usize>(
 
     out
 }
+
+#[cfg(kani)]
+mod kani_proofs {
+    use super::montgomery_multiply_inner;
+    use crate::{Limb, U64, Word};
+
+    /// Textbook Montgomery multiplication (HAC Algorithm 14.36, without the final subtraction)
+    /// for 64-bit operands, in native arithmetic: returns `(x·y + U·m) / 2^64` for the `U` the
+    /// algorithm picks, one limb at a time.
+    fn reference(x: u64, y: u64, m: u64, mod_neg_inv: Word) -> u128 {
+        let w = Limb::BITS;
+        let digit_mask = u128::from(Word::MAX);
+        let mut a: u128 = 0;
+        let mut i = 0;
+        while i < U64::LIMBS {
+            let xi = u128::from(x >> (i as u32 * w)) & digit_mask;
+            let ui = ((a + xi * u128::from(y)) & digit_mask) * u128::from(mod_neg_inv) & digit_mask;
+            // `a + xi·y + ui·m < 2^129`; keep the carry bit across the shift.
+            let (t, carry) = (a + xi * u128::from(y)).overflowing_add(ui * u128::from(m));
+            a = (t >> w) | (u128::from(carry) << (u128::BITS - w));
+            i += 1;
+        }
+        a
+    }
+
+    /// The FIOS implementation computes exactly the textbook Montgomery product, for all
+    /// operands (not only reduced ones), an odd modulus, and its correct `-m^{-1} mod 2^W`.
+    // Z3 handles this algebraic reference; CaDiCaL exceeded the 120-second budget.
+    #[kani::proof]
+    #[kani::solver(z3)]
+    #[kani::unwind(3)]
+    fn montgomery_multiply_inner_matches_textbook() {
+        let (x, y, m, mod_neg_inv): (u64, u64, u64, Word) = kani::any();
+        kani::assume(m & 1 == 1);
+        kani::assume((m as Word).wrapping_mul(mod_neg_inv) == Word::MAX);
+
+        let mut out = U64::ZERO;
+        let meta_carry = montgomery_multiply_inner(
+            &U64::from_u64(x).limbs,
+            &U64::from_u64(y).limbs,
+            &mut out.limbs,
+            &U64::from_u64(m).limbs,
+            Limb(mod_neg_inv),
+        );
+        let got = u128::from(u64::from(out)) | (u128::from(meta_carry.0) << 64);
+        assert_eq!(got, reference(x, y, m, mod_neg_inv));
+    }
+}

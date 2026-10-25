@@ -498,3 +498,59 @@ mod tests {
         crate::traits::tests::test_unsigned(Limb::ZERO, Limb::MAX);
     }
 }
+
+#[cfg(kani)]
+mod kani_proofs {
+    use super::{Limb, nlimbs};
+    use crate::Word;
+
+    // Array equality can lower to memcmp over 24 bytes, rather than three limb comparisons.
+    #[kani::proof]
+    #[kani::unwind(34)]
+    fn limb_word_array_views_preserve_storage() {
+        let original: [Word; 3] = kani::any();
+        let replacement: [Word; 3] = kani::any();
+        let mut limbs = original.map(Limb);
+        assert_eq!(*Limb::array_as_words(&limbs), original);
+        Limb::array_as_mut_words(&mut limbs).copy_from_slice(&replacement);
+        assert_eq!(limbs, replacement.map(Limb));
+
+        let mut empty: [Limb; 0] = [];
+        assert!(Limb::array_as_words(&empty).is_empty());
+        assert!(Limb::array_as_mut_words(&mut empty).is_empty());
+    }
+
+    /// Includes empty slices and mutations of every possible subrange of three limbs.
+    #[kani::proof]
+    #[kani::unwind(34)]
+    fn limb_word_slice_views_preserve_storage() {
+        let original: [Word; 3] = kani::any();
+        let (start, end): (usize, usize) = kani::any();
+        kani::assume(start <= end && end <= original.len());
+        let replacement: Word = kani::any();
+        let mut limbs = original.map(Limb);
+        assert_eq!(
+            Limb::slice_as_words(&limbs[start..end]),
+            &original[start..end]
+        );
+        Limb::slice_as_mut_words(&mut limbs[start..end]).fill(replacement);
+        for i in 0..original.len() {
+            let expected = if start <= i && i < end {
+                replacement
+            } else {
+                original[i]
+            };
+            assert_eq!(limbs[i].0, expected);
+        }
+    }
+
+    /// Rounds up for every `u32` input, including those near `u32::MAX`.
+    #[kani::proof]
+    fn nlimbs_rounds_up() {
+        let bits: u32 = kani::any();
+        assert_eq!(
+            nlimbs(bits) as u64,
+            u64::from(bits).div_ceil(u64::from(Limb::BITS))
+        );
+    }
+}

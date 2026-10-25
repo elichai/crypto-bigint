@@ -207,3 +207,32 @@ mod tests {
         );
     }
 }
+
+#[cfg(kani)]
+mod kani_proofs {
+    use crate::{Limb, Word};
+
+    /// All right-shift variants agree with `Word::checked_shr` / `Word::wrapping_shr`.
+    #[kani::proof]
+    fn shr_variants_correct() {
+        let (x, shift): (Word, u32) = kani::any();
+        let checked = x.checked_shr(shift);
+
+        assert_eq!(
+            Option::<Limb>::from(Limb(x).overflowing_shr(shift)).map(|l| l.0),
+            checked
+        );
+        assert_eq!(Limb(x).overflowing_shr_vartime(shift).map(|l| l.0), checked);
+        assert_eq!(Limb(x).unbounded_shr(shift).0, checked.unwrap_or(0));
+        assert_eq!(Limb(x).unbounded_shr_vartime(shift).0, checked.unwrap_or(0));
+        assert_eq!(Limb(x).wrapping_shr(shift).0, x.wrapping_shr(shift));
+        if shift < Limb::BITS {
+            assert_eq!(Limb(x).shr(shift).0, x >> shift);
+        }
+
+        // `shr1` also returns the shifted-out bit, moved to the top.
+        let (hi, lo) = Limb(x).shr1();
+        assert_eq!(hi.0, x >> 1);
+        assert_eq!(lo.0, (x & 1) << (Limb::BITS - 1));
+    }
+}

@@ -785,3 +785,15 @@ mod tests {
         }
     }
 }
+
+#[cfg(kani)]
+mod kani_proofs {
+    use crate::U128;
+
+    #[kani::proof]
+    fn abs_diff_correct() {
+        let (a, b): (u128, u128) = kani::any();
+        let (diff, b_gt_a) = U128::from_u128(a).abs_diff(&U128::from_u128(b));
+        assert_eq!((u128::from(diff), b_gt_a.to_bool()), (a.abs_diff(b), b > a));
+    }
+}

@@ -54,3 +54,26 @@ mod tests {
         assert_eq!(u4, Some(U64::ONE));
     }
 }
+
+#[cfg(kani)]
+mod kani_proofs {
+    use crate::{U64, U128};
+
+    /// Widening zero-extends; narrowing truncates, and `resize_checked` is `Some` iff no
+    /// non-zero bits are dropped.
+    #[kani::proof]
+    #[kani::unwind(5)]
+    fn uint_resize_correct() {
+        let x: u128 = kani::any();
+        let narrow: U64 = U128::from_u128(x).resize();
+        assert_eq!(u64::from(narrow), x as u64);
+        let checked = Option::<U64>::from(U128::from_u128(x).resize_checked());
+        assert_eq!(checked.map(u64::from), u64::try_from(x).ok());
+
+        let y: u64 = kani::any();
+        let wide: U128 = U64::from_u64(y).resize();
+        assert_eq!(u128::from(wide), u128::from(y));
+        let checked = Option::<U128>::from(U64::from_u64(y).resize_checked());
+        assert_eq!(checked.map(u128::from), Some(u128::from(y)));
+    }
+}

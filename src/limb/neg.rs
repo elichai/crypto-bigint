@@ -27,3 +27,23 @@ impl NegMod for Limb {
         Self::select(Limb::ZERO, res, nz)
     }
 }
+
+#[cfg(kani)]
+mod kani_proofs {
+    use crate::{Limb, NegMod, NonZero, Word};
+
+    #[kani::proof]
+    fn limb_wrapping_neg_correct() {
+        let a: Word = kani::any();
+        assert_eq!(Limb(a).wrapping_neg().0, a.wrapping_neg());
+    }
+
+    /// For a reduced input `a < p`, the result is `-a mod p`.
+    #[kani::proof]
+    fn neg_mod_correct() {
+        let (a, p): (Word, Word) = kani::any();
+        kani::assume(a < p);
+        let res = Limb(a).neg_mod(&NonZero::new(Limb(p)).unwrap());
+        assert_eq!(res.0, if a == 0 { 0 } else { p - a });
+    }
+}

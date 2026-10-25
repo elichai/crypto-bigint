@@ -793,3 +793,32 @@ mod tests {
         );
     }
 }
+
+#[cfg(kani)]
+mod kani_proofs {
+    use super::NonZero;
+    use crate::{I128, Limb, U128, Word};
+
+    /// `NonZero::new` is `Some` exactly for non-zero inputs and then wraps the input unchanged.
+    /// Even when it is `None`, the wrapped placeholder is non-zero.
+    #[kani::proof]
+    #[kani::unwind(5)]
+    fn non_zero_new_correct() {
+        let (w, u, i): (Word, u128, i128) = kani::any();
+
+        let nz = NonZero::new(Limb(w));
+        assert_eq!(nz.is_some().to_bool(), w != 0);
+        let inner = nz.to_inner_unchecked().get();
+        assert!(inner.0 != 0 && (w == 0 || inner.0 == w));
+
+        let nz = NonZero::new(U128::from_u128(u));
+        assert_eq!(nz.is_some().to_bool(), u != 0);
+        let inner = u128::from(nz.to_inner_unchecked().get());
+        assert!(inner != 0 && (u == 0 || inner == u));
+
+        let nz = NonZero::new(I128::from_i128(i));
+        assert_eq!(nz.is_some().to_bool(), i != 0);
+        let inner = i128::from(nz.to_inner_unchecked().get());
+        assert!(inner != 0 && (i == 0 || inner == i));
+    }
+}

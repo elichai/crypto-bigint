@@ -108,3 +108,54 @@ mod tests {
         );
     }
 }
+
+#[cfg(kani)]
+mod kani_proofs {
+    use crate::Limb;
+
+    /// Exact for every limb count whose bit length fits in a `u32`.
+    #[kani::proof]
+    fn from_limbs_correct() {
+        let nlimbs: usize = kani::any();
+        let nbits = nlimbs as u128 * u128::from(Limb::BITS);
+        kani::assume(nbits <= u128::from(u32::MAX));
+        assert_eq!(u128::from(super::from_limbs(nlimbs)), nbits);
+    }
+
+    /// Exact for every byte count whose bit length fits in a `u32`.
+    #[kani::proof]
+    fn from_bytes_correct() {
+        let nbytes: usize = kani::any();
+        let nbits = nbytes as u128 * 8;
+        kani::assume(nbits <= u128::from(u32::MAX));
+        assert_eq!(u128::from(super::from_bytes(nbytes)), nbits);
+    }
+
+    /// Rounds up for every `u32` input; the result is the smallest count that holds `nbits`.
+    #[kani::proof]
+    fn to_limbs_and_bytes_round_up() {
+        let nbits: u32 = kani::any();
+        let bits = u64::from(nbits);
+
+        let nlimbs = super::to_limbs(nbits) as u64;
+        assert_eq!(u64::from(super::to_limbs_u32(nbits)), nlimbs);
+        assert!(nlimbs * u64::from(Limb::BITS) >= bits);
+        assert!(nlimbs == 0 || (nlimbs - 1) * u64::from(Limb::BITS) < bits);
+
+        let nbytes = super::to_bytes(nbits) as u64;
+        assert!(nbytes * 8 >= bits);
+        assert!(nbytes == 0 || (nbytes - 1) * 8 < bits);
+    }
+
+    /// All power-of-two divisors for which the helper is defined, including `2^31`.
+    #[kani::proof]
+    fn div_ceil_pow2_correct() {
+        let (n, log2): (u32, u32) = kani::any();
+        kani::assume(log2 < 32);
+        let divisor = 1u64 << log2;
+        assert_eq!(
+            u64::from(super::div_ceil_pow2(n, log2)),
+            u64::from(n).div_ceil(divisor)
+        );
+    }
+}

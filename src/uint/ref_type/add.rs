@@ -116,6 +116,98 @@ impl UintRef {
     }
 }
 
+#[cfg(kani)]
+mod kani_proofs {
+    use crate::{Choice, Limb, UintRef, WideWord, Word};
+
+    /// Includes empty slices, arbitrary incoming carry, and untouched backing limbs.
+    #[kani::proof]
+    #[kani::unwind(6)]
+    fn uint_ref_carrying_add_mixed_lengths() {
+        let original: [Word; 4] = kani::any();
+        let rhs: [Word; 4] = kani::any();
+        let (len, rhs_len): (usize, usize) = kani::any();
+        kani::assume(rhs_len <= len && len <= 4);
+        let incoming: Word = kani::any();
+        let enabled: bool = kani::any();
+        let mut plain = original.map(Limb);
+        let mut conditional = plain;
+        let rhs_limbs = rhs.map(Limb);
+        let carry = UintRef::new_mut(&mut plain[..len])
+            .carrying_add_assign(UintRef::new(&rhs_limbs[..rhs_len]), Limb(incoming));
+        let conditional_carry = UintRef::new_mut(&mut conditional[..len])
+            .conditional_add_assign_slice(
+                &rhs_limbs[..rhs_len],
+                Limb(incoming),
+                Choice::from_u8_lsb(enabled as u8),
+            );
+        let mut expected_carry = incoming as WideWord;
+        let mut expected_conditional_carry = incoming as WideWord;
+        for i in 0..4 {
+            if i < len {
+                let rhs_word = if i < rhs_len { rhs[i] } else { 0 };
+                let sum = original[i] as WideWord + rhs_word as WideWord + expected_carry;
+                let conditional_sum = original[i] as WideWord
+                    + if enabled { rhs_word as WideWord } else { 0 }
+                    + expected_conditional_carry;
+                assert_eq!(plain[i].0, sum as Word);
+                assert_eq!(conditional[i].0, conditional_sum as Word);
+                expected_carry = sum >> Word::BITS;
+                expected_conditional_carry = conditional_sum >> Word::BITS;
+            } else {
+                assert_eq!(plain[i].0, original[i]);
+                assert_eq!(conditional[i].0, original[i]);
+            }
+        }
+        assert_eq!(carry.0 as WideWord, expected_carry);
+        assert_eq!(conditional_carry.0 as WideWord, expected_conditional_carry);
+    }
+
+    #[kani::proof]
+    #[kani::unwind(6)]
+    fn uint_ref_add_assign_limb_mixed_lengths() {
+        let original: [Word; 4] = kani::any();
+        let rhs: Word = kani::any();
+        let len: usize = kani::any();
+        kani::assume(len <= 4);
+        let mut limbs = original.map(Limb);
+        let carry = UintRef::new_mut(&mut limbs[..len]).add_assign_limb(Limb(rhs));
+        let mut expected_carry = rhs as WideWord;
+        for i in 0..4 {
+            if i < len {
+                let sum = original[i] as WideWord + expected_carry;
+                assert_eq!(limbs[i].0, sum as Word);
+                expected_carry = sum >> Word::BITS;
+            } else {
+                assert_eq!(limbs[i].0, original[i]);
+            }
+        }
+        assert_eq!(carry.0 as WideWord, expected_carry);
+    }
+
+    /// A full-word multiplier, addend, and incoming carry, with propagation into a spare limb.
+    #[kani::proof]
+    #[kani::solver(z3)]
+    #[kani::unwind(4)]
+    fn uint_ref_carrying_add_mul_limb_two_words() {
+        let original: [Word; 2] = kani::any();
+        let (rhs, multiplier, incoming): (Word, Word, Word) = kani::any();
+        let mut out = [Limb(original[0]), Limb(original[1])];
+        let carry = UintRef::new_mut(&mut out).carrying_add_assign_mul_limb(
+            UintRef::new(&[Limb(rhs)]),
+            Limb(multiplier),
+            Limb(incoming),
+        );
+        let low = original[0] as WideWord
+            + rhs as WideWord * multiplier as WideWord
+            + incoming as WideWord;
+        let high = original[1] as WideWord + (low >> Word::BITS);
+        assert_eq!(out[0].0, low as Word);
+        assert_eq!(out[1].0, high as Word);
+        assert_eq!(carry.0, (high >> Word::BITS) as Word);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::{Choice, Limb, UintRef, Unsigned};

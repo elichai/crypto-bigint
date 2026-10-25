@@ -198,3 +198,85 @@ mod tests {
         }
     }
 }
+
+#[cfg(kani)]
+mod kani_proofs {
+    use super::*;
+    use crate::word::join;
+
+    #[kani::proof]
+    fn carrying_add_correct() {
+        let (lhs, rhs, carry): (Word, Word, Word) = kani::any();
+        let (res, carry_out) = carrying_add(lhs, rhs, carry);
+        let expected = lhs as WideWord + rhs as WideWord + carry as WideWord;
+        assert_eq!(join(res, carry_out), expected);
+        if carry <= 1 {
+            assert!(carry_out <= 1);
+        }
+    }
+
+    /// Also checks the in-code argument that the wide sum cannot overflow.
+    #[kani::proof]
+    fn carrying_mul_add_correct() {
+        let (lhs, rhs, addend, carry): (Word, Word, Word, Word) = kani::any();
+        let (lo, hi) = carrying_mul_add(lhs, rhs, addend, carry);
+        let expected =
+            (lhs as WideWord) * (rhs as WideWord) + addend as WideWord + carry as WideWord;
+        assert_eq!(join(lo, hi), expected);
+    }
+
+    #[kani::proof]
+    fn u32_min_max_correct() {
+        let (a, b): (u32, u32) = kani::any();
+        assert_eq!(u32_min(a, b), a.min(b));
+        assert_eq!(u32_max(a, b), a.max(b));
+        assert_eq!(u32_bits(a), u32::BITS - a.leading_zeros());
+        let (a, b): (usize, usize) = kani::any();
+        assert_eq!(usize_lt(a, b).to_bool(), a < b);
+    }
+
+    /// Lemire's remainder is exact for every `n` and every multiple-of-32 divisor up to 4096.
+    /// This bounds the caller precision domain; larger precisions are not covered here.
+    /// Concrete divisors let CBMC fold reciprocals, but non-power-of-two cases remain expensive.
+    /// `d == 1` overflows in debug builds.
+    #[kani::proof]
+    #[kani::unwind(130)]
+    fn u32_rem_correct_for_bit_precisions() {
+        let n: u32 = kani::any();
+        let mut d = 32;
+        while d <= 4096 {
+            assert_eq!(u32_rem(n, d), n % d);
+            d += 32;
+        }
+    }
+
+    /// All dividends at power-of-two precisions from 32 to 4096 bits.
+    #[kani::proof]
+    #[kani::unwind(10)]
+    fn u32_rem_power_of_two_precisions_correct() {
+        let n: u32 = kani::any();
+        for shift in 5..=12 {
+            let d = 1 << shift;
+            assert_eq!(u32_rem(n, d), n & (d - 1));
+        }
+    }
+
+    /// All odd inputs, checking the low 16 bits of the inverse rather than a reduced input set.
+    #[kani::proof]
+    fn u64_invert_odd_low16_correct() {
+        let value = kani::any::<u64>() | 1;
+        let inverse = u64_invert_odd(value);
+        assert_eq!((value as u16).wrapping_mul(inverse as u16), 1);
+    }
+
+    cpubits::cpubits! {
+        32 => {
+            /// All odd inputs to the separate 32-bit implementation, modulo 2^16.
+            #[kani::proof]
+            fn u32_invert_odd_low16_correct() {
+                let value = kani::any::<u32>() | 1;
+                assert_eq!((value as u16).wrapping_mul(u32_invert_odd(value) as u16), 1);
+            }
+        }
+    }
+}

@@ -178,6 +178,36 @@ impl<const LIMBS: usize> FixedMontyParams<LIMBS> {
     }
 }
 
+#[cfg(kani)]
+mod kani_proofs {
+    use super::FixedMontyParams;
+    use crate::{Choice, CtAssign, CtEq, CtSelect, Odd, U64};
+
+    /// Every field is symbolic: this checks structural operations, not parameter construction.
+    #[kani::proof]
+    #[kani::unwind(3)]
+    fn monty_params_ct_operations_all_fields() {
+        let (a, b): ([u64; 4], [u64; 4]) = kani::any();
+        let (az, bz, choose): (u32, u32, bool) = kani::any();
+        let make = |v: [u64; 4], z| FixedMontyParams {
+            modulus: Odd::new(U64::from_u64(v[0] | 1)).unwrap(),
+            one: U64::from_u64(v[1]),
+            r2: U64::from_u64(v[2]),
+            mod_inv: U64::from_u64(v[3]),
+            mod_leading_zeros: z,
+        };
+        let a = make(a, az);
+        let b = make(b, bz);
+        assert_eq!(a.ct_eq(&b).to_bool(), a == b);
+        let choice = Choice::from(u8::from(choose));
+        let expected = if choose { b } else { a };
+        assert_eq!(a.ct_select(&b, choice), expected);
+        let mut assigned = a;
+        assigned.ct_assign(&b, choice);
+        assert_eq!(assigned, expected);
+    }
+}
+
 impl<const LIMBS: usize> FixedMontyParams<LIMBS> {
     /// Instantiates a new set of `MontyParams` representing the given odd `modulus`.
     #[must_use]

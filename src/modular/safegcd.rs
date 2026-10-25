@@ -595,3 +595,229 @@ mod tests {
         iterations(1_864_517_464);
     }
 }
+
+#[cfg(kani)]
+mod kani_proofs {
+    use super::{
+        Matrix, SignedInt, conditional_negate_in_place_wide, jump_step, jump_step_vartime,
+        shr_in_place_wide,
+    };
+    use crate::{Choice, I64, Limb, U64, U128};
+
+    fn native_product(a: u64, b: u64) -> u128 {
+        if Limb::BITS == 32 {
+            let (a_lo, a_hi) = (u64::from(a as u32), a >> 32);
+            let (b_lo, b_hi) = (u64::from(b as u32), b >> 32);
+            // Exact a*b; native radix-2^32 carry order shares the implementation's solver circuits.
+            let p00 = a_lo * b_lo;
+            let p01 = a_lo * b_hi + (p00 >> 32);
+            let p10 = a_hi * b_lo + u64::from(p01 as u32);
+            let p11 = a_hi * b_hi + (p01 >> 32) + (p10 >> 32);
+            u128::from(p00 as u32) | (u128::from(p10 as u32) << 32) | (u128::from(p11) << 64)
+        } else {
+            u128::from(a) * u128::from(b)
+        }
+    }
+
+    /// The signed tail uses only the low 63 magnitude bits, including for negative zero.
+    #[kani::proof]
+    #[kani::unwind(5)]
+    fn safegcd_signed_lowest_correct() {
+        let (magnitude, negative): (u128, bool) = kani::any();
+        let signed =
+            SignedInt::from_uint_sign(U128::from_u128(magnitude), u8::from(negative).into());
+        let tail = (magnitude & ((1 << 63) - 1)) as i64;
+        assert_eq!(signed.lowest(), if negative { -tail } else { tail });
+        assert_eq!(signed.is_nonzero().to_bool(), magnitude != 0);
+        assert_eq!(signed.is_zero_vartime(), magnitude == 0);
+    }
+
+    /// Normalization applies the product of both signs modulo `m` for a reduced magnitude.
+    #[kani::proof]
+    #[kani::unwind(5)]
+    fn safegcd_signed_norm_correct() {
+        let (magnitude, modulus, negative, f_negative): (u128, u128, bool, bool) = kani::any();
+        kani::assume(magnitude < modulus);
+        let signed =
+            SignedInt::from_uint_sign(U128::from_u128(magnitude), u8::from(negative).into());
+        let result =
+            u128::from(signed.norm(u8::from(f_negative).into(), &U128::from_u128(modulus)));
+        let expected = if magnitude != 0 && negative != f_negative {
+            modulus - magnitude
+        } else {
+            magnitude
+        };
+        assert_eq!(result, expected);
+        assert!(result < modulus);
+    }
+
+    /// Full 64-bit magnitudes and signed coefficients, including `i64::MIN` and cancellation.
+    /// Native sign/magnitude arithmetic avoids overflowing `i128` when both products are large.
+    // CaDiCaL32 and Z3/64 fit 120s; the earlier Z3/32 oracle and CaDiCaL64 did not.
+    #[kani::proof]
+    #[cfg_attr(cpubits = "32", kani::solver(cadical))]
+    #[cfg_attr(not(cpubits = "32"), kani::solver(z3))]
+    #[kani::unwind(5)]
+    fn safegcd_signed_lincomb_u64_correct() {
+        let (a, b, c, d, a_negative, b_negative): (u64, u64, i64, i64, bool, bool) = kani::any();
+        let sa = SignedInt::from_uint_sign(U64::from_u64(a), u8::from(a_negative).into());
+        let sb = SignedInt::from_uint_sign(U64::from_u64(b), u8::from(b_negative).into());
+        let (c_int, d_int) = (I64::from_i64(c), I64::from_i64(d));
+        let (c_magnitude, d_magnitude) = (u64::from(c_int.abs()), u64::from(d_int.abs()));
+        // Check multiplier inputs independently, then share their circuits with the implementation.
+        assert_eq!(c_magnitude, c.unsigned_abs());
+        assert_eq!(d_magnitude, d.unsigned_abs());
+        let (lo, hi, negative) = SignedInt::lincomb_int(&sa, &sb, &c_int, &d_int);
+        let x = native_product(a, c_magnitude);
+        let y = native_product(b, d_magnitude);
+        let x_negative = a_negative ^ (c < 0);
+        let y_negative = b_negative ^ (d < 0);
+        let (magnitude, expected_negative) = if x_negative == y_negative {
+            (x + y, x_negative)
+        } else if x >= y {
+            (x - y, x_negative)
+        } else {
+            (y - x, y_negative)
+        };
+        assert_eq!(
+            (u128::from(u64::from(hi)) << 64) | u128::from(u64::from(lo)),
+            magnitude
+        );
+        // The representation permits either sign for zero.
+        if magnitude != 0 {
+            assert_eq!(negative.to_bool(), expected_negative);
+        }
+    }
+
+    /// The upstream widened iteration calculation returns the exact floor without truncation.
+    // Z3 proves this specification in under a second; CaDiCaL exceeds 120 seconds.
+    #[kani::proof]
+    #[kani::solver(z3)]
+    fn safegcd_iterations_correct() {
+        let bits: u32 = kani::any();
+        let expected = (45907 * u64::from(bits) + 30179) / 19929;
+        kani::assume(expected <= u64::from(u32::MAX));
+        assert_eq!(u64::from(super::iterations(bits)), expected);
+    }
+
+    /// One constant-time divstep agrees with the vartime one, keeps `f` odd, and only halves even
+    /// values of `g`. `t[0]` entries of `i64::MIN` are excluded: the constant-time step negates
+    /// them (`jump_step_row_bounds` shows they cannot occur).
+    #[kani::proof]
+    fn jump_step_ct_matches_vartime() {
+        let (f, g, delta): (i64, i64, i64) = kani::any();
+        let t: Matrix = kani::any();
+        kani::assume(f & 1 == 1);
+        kani::assume(t[0][0] != i64::MIN && t[0][1] != i64::MIN);
+
+        let ct = jump_step(f, g, delta, t);
+        assert_eq!(ct, jump_step_vartime(f, g, delta, t));
+
+        let (f2, g2, _, _) = ct;
+        assert_eq!(f2 & 1, 1);
+        // The halved value is exact: `2·g2` is `g`, `g + f` or `g - f` (all even when used).
+        let unhalved = if g & 1 == 0 {
+            g
+        } else if delta > 0 {
+            g.wrapping_sub(f)
+        } else {
+            g.wrapping_add(f)
+        };
+        assert_eq!(unhalved & 1, 0);
+        assert_eq!(unhalved >> 1, g2);
+    }
+
+    /// A divstep consumes one low bit: congruence modulo `2^k` becomes congruence modulo
+    /// `2^(k-1)`, with identical delta and matrix updates. Induction gives batch tail dependence.
+    #[kani::proof]
+    fn jump_step_low_bits_dependence() {
+        let (f, g, f_high, g_high, delta, k): (i64, i64, u64, u64, i64, u32) = kani::any();
+        let t: Matrix = kani::any();
+        kani::assume(f & 1 == 1);
+        kani::assume(1 <= k && k <= 63);
+        kani::assume(t[0][0] != i64::MIN && t[0][1] != i64::MIN);
+        let mask = (1u64 << k) - 1;
+        let same_f_tail = ((f as u64 & mask) | (f_high & !mask)) as i64;
+        let same_g_tail = ((g as u64 & mask) | (g_high & !mask)) as i64;
+        let (f1, g1, delta1, t1) = jump_step(f, g, delta, t);
+        let (f2, g2, delta2, t2) = jump_step(same_f_tail, same_g_tail, delta, t);
+        assert_eq!((delta1, t1), (delta2, t2));
+        assert_eq!(f1 as u64 & (mask >> 1), f2 as u64 & (mask >> 1));
+        assert_eq!(g1 as u64 & (mask >> 1), g2 as u64 & (mask >> 1));
+    }
+
+    fn row_norm(row: [i64; 2]) -> u128 {
+        u128::from(row[0].unsigned_abs()) + u128::from(row[1].unsigned_abs())
+    }
+
+    /// If both rows of `t` have `|t[i][0]| + |t[i][1]| <= 2^k`, one divstep keeps both rows below
+    /// `2^(k+1)` without overflow. From the identity matrix, by induction, every matrix produced by
+    /// a batch of at most 62 steps has rows bounded by `2^62`: no entry is `i64::MIN`, and the
+    /// matrix arithmetic in `jump_step` never overflows. Linear combinations need separate bounds.
+    #[kani::proof]
+    fn jump_step_row_bounds() {
+        let (f, g, delta, k): (i64, i64, i64, u32) = kani::any();
+        let t: Matrix = kani::any();
+        kani::assume(f & 1 == 1);
+        kani::assume(k <= 61);
+        kani::assume(row_norm(t[0]) <= 1 << k && row_norm(t[1]) <= 1 << k);
+
+        let (_, _, _, t2) = jump_step(f, g, delta, t);
+        assert!(row_norm(t2[0]) <= 1 << (k + 1));
+        assert!(row_norm(t2[1]) <= 1 << (k + 1));
+    }
+
+    /// Shifting the wide value `(lo, hi)` right by `0 < shift < 64` (the batch sizes used) agrees
+    /// with native arithmetic, for a 64- and a 128-bit `lo` under a 64-bit `hi`. These are the
+    /// `(L, H)` shapes `(1, 1)`, `(2, 1)` with 64-bit words and `(2, 2)`, `(4, 2)` with 32-bit
+    /// words. With 32-bit words, `Uint<1>` gives `L = 1 < H = 2`, which panics.
+    #[kani::proof]
+    #[kani::unwind(5)]
+    fn shr_in_place_wide_correct() {
+        let (lo, hi, shift): (u128, u64, u32) = kani::any();
+        kani::assume(0 < shift && shift < 64);
+
+        let (mut ulo, mut uhi) = (U64::from_u64(lo as u64), U64::from_u64(hi));
+        shr_in_place_wide(&mut ulo, &mut uhi, shift);
+        let wide = (u128::from(hi) << 64) | u128::from(lo as u64);
+        assert_eq!(u64::from(ulo), (wide >> shift) as u64);
+        assert_eq!(u64::from(uhi), hi >> shift);
+
+        let (mut ulo, mut uhi) = (U128::from_u128(lo), U64::from_u64(hi));
+        shr_in_place_wide(&mut ulo, &mut uhi, shift);
+        let expected_lo = (lo >> shift) | (u128::from(hi) << (128 - shift));
+        assert_eq!(u128::from(ulo), expected_lo);
+        assert_eq!(u64::from(uhi), hi >> shift);
+    }
+
+    /// Conditionally negating the wide value `(lo, hi)` is two's complement negation of the
+    /// concatenation, for 64- and 128-bit `lo` under a 64-bit `hi`.
+    #[kani::proof]
+    #[kani::unwind(5)]
+    fn conditional_negate_in_place_wide_correct() {
+        let (lo, hi, flag): (u128, u64, bool) = kani::any();
+        let choice = if flag { Choice::TRUE } else { Choice::FALSE };
+
+        let (mut ulo, mut uhi) = (U64::from_u64(lo as u64), U64::from_u64(hi));
+        conditional_negate_in_place_wide(&mut ulo, &mut uhi, choice);
+        let wide = (u128::from(hi) << 64) | u128::from(lo as u64);
+        let expected = if flag { wide.wrapping_neg() } else { wide };
+        assert_eq!(
+            (u64::from(ulo), u64::from(uhi)),
+            (expected as u64, (expected >> 64) as u64)
+        );
+
+        let (mut ulo, mut uhi) = (U128::from_u128(lo), U64::from_u64(hi));
+        conditional_negate_in_place_wide(&mut ulo, &mut uhi, choice);
+        // 192-bit negation: the low part is `-lo`, the high part `!hi + (lo == 0)`.
+        let (expected_lo, expected_hi) = if flag {
+            (lo.wrapping_neg(), (!hi).wrapping_add(u64::from(lo == 0)))
+        } else {
+            (lo, hi)
+        };
+        assert_eq!(
+            (u128::from(ulo), u64::from(uhi)),
+            (expected_lo, expected_hi)
+        );
+    }
+}

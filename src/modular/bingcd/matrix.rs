@@ -465,3 +465,99 @@ mod tests {
         assert_eq!(y, target);
     }
 }
+
+#[cfg(kani)]
+mod kani_proofs {
+    use super::PatternMatrix;
+    use crate::{Choice, U64};
+
+    type Decoded = [[i128; 2]; 2];
+
+    fn any_pattern_matrix() -> PatternMatrix<{ U64::LIMBS }> {
+        let (m00, m01, m10, m11, pattern): (u64, u64, u64, u64, bool) = kani::any();
+        PatternMatrix {
+            m00: U64::from_u64(m00),
+            m01: U64::from_u64(m01),
+            m10: U64::from_u64(m10),
+            m11: U64::from_u64(m11),
+            pattern: if pattern { Choice::TRUE } else { Choice::FALSE },
+        }
+    }
+
+    /// Element-wise equality (array `==` lowers to `memcmp`, which needs a large unwind bound).
+    fn assert_same(a: Decoded, b: Decoded) {
+        for i in 0..2 {
+            for j in 0..2 {
+                assert_eq!(a[i][j], b[i][j]);
+            }
+        }
+    }
+
+    /// The signed matrix a `PatternMatrix` represents.
+    fn decode(m: &PatternMatrix<{ U64::LIMBS }>) -> Decoded {
+        let s = if m.pattern.to_bool() { 1 } else { -1 };
+        let v = |x: U64| i128::from(u64::from(x));
+        [[s * v(m.m00), -s * v(m.m01)], [-s * v(m.m10), s * v(m.m11)]]
+    }
+
+    /// Each conditional row/column operation transforms the represented signed matrix as named,
+    /// as long as no magnitude wraps. `conditional_add_right_column_to_left` computes
+    /// `left ← -(left + right)` (its doc says `left ← left + right`); `binxgcd_nz` follows it with
+    /// `conditional_negate`, and the magnitudes stay valid only if `m01 >= m00` and `m11 >= m10`.
+    #[kani::proof]
+    #[kani::unwind(5)]
+    fn pattern_matrix_ops_correct() {
+        let m = any_pattern_matrix();
+        let d = decode(&m);
+        let (m00, m01) = (u64::from(m.m00), u64::from(m.m01));
+        let (m10, m11) = (u64::from(m.m10), u64::from(m.m11));
+
+        let mut x = m;
+        x.conditional_swap_rows(Choice::TRUE);
+        assert_same(decode(&x), [d[1], d[0]]);
+
+        let mut x = m;
+        x.conditional_negate(Choice::TRUE);
+        assert_same(decode(&x), [[-d[0][0], -d[0][1]], [-d[1][0], -d[1][1]]]);
+
+        if m00.checked_add(m10).is_some() && m01.checked_add(m11).is_some() {
+            let mut x = m;
+            x.conditional_subtract_bottom_row_from_top(Choice::TRUE);
+            let top = [d[0][0] - d[1][0], d[0][1] - d[1][1]];
+            assert_same(decode(&x), [top, d[1]]);
+        }
+
+        if m00.checked_add(m01).is_some() && m10.checked_add(m11).is_some() {
+            let mut x = m;
+            x.conditional_subtract_right_column_from_left(Choice::TRUE);
+            let expected = [[d[0][0] - d[0][1], d[0][1]], [d[1][0] - d[1][1], d[1][1]]];
+            assert_same(decode(&x), expected);
+        }
+
+        if m01 >= m00 && m11 >= m10 {
+            let mut x = m;
+            x.conditional_add_right_column_to_left(Choice::TRUE);
+            let expected = [
+                [-(d[0][0] + d[0][1]), d[0][1]],
+                [-(d[1][0] + d[1][1]), d[1][1]],
+            ];
+            assert_same(decode(&x), expected);
+        }
+
+        if m10 >> 63 == 0 && m11 >> 63 == 0 {
+            let mut x = m;
+            x.conditional_double_bottom_row(Choice::TRUE);
+            assert_same(decode(&x), [d[0], [2 * d[1][0], 2 * d[1][1]]]);
+        }
+
+        // A falsy choice leaves the matrix unchanged.
+        let mut x = m;
+        x.conditional_swap_rows(Choice::FALSE);
+        x.conditional_negate(Choice::FALSE);
+        x.conditional_subtract_bottom_row_from_top(Choice::FALSE);
+        x.conditional_subtract_right_column_from_left(Choice::FALSE);
+        x.conditional_add_right_column_to_left(Choice::FALSE);
+        x.conditional_double_bottom_row(Choice::FALSE);
+        assert_same(decode(&x), d);
+    }
+}

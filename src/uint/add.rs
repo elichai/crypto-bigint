@@ -197,3 +197,33 @@ mod tests {
         assert_eq!(U128::MAX.wrapping_add_limb(Limb::ONE), U128::ZERO);
     }
 }
+
+#[cfg(kani)]
+mod kani_proofs {
+    use crate::{CheckedAdd, Limb, U128, Word};
+
+    /// `U128` addition agrees with `u128`, for any carry-in word.
+    #[kani::proof]
+    fn add_correct() {
+        let (a, b, carry): (u128, u128, Word) = kani::any();
+        let (ua, ub) = (U128::from_u128(a), U128::from_u128(b));
+
+        let (s1, o1) = a.overflowing_add(b);
+        let (sum, o2) = s1.overflowing_add(u128::from(carry));
+        let (res, carry_out) = ua.carrying_add(&ub, Limb(carry));
+        assert_eq!(u128::from(res), sum);
+        assert_eq!(carry_out.0, Word::from(o1) + Word::from(o2));
+
+        assert_eq!(u128::from(ua.wrapping_add(&ub)), a.wrapping_add(b));
+        assert_eq!(u128::from(ua.saturating_add(&ub)), a.saturating_add(b));
+        assert_eq!(
+            Option::<U128>::from(ua.checked_add(&ub)).map(u128::from),
+            a.checked_add(b)
+        );
+
+        let (res, carry_out) = ua.overflowing_add_limb(Limb(carry));
+        let (sum, o) = a.overflowing_add(u128::from(carry));
+        assert_eq!(u128::from(res), sum);
+        assert_eq!(carry_out.0, Word::from(o));
+    }
+}

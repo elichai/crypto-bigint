@@ -311,3 +311,59 @@ mod tests {
         assert_eq!(u.set_bit(150, Choice::FALSE), uint_with_bits_at(&[16, 79]));
     }
 }
+
+#[cfg(kani)]
+mod kani_proofs {
+    use crate::{Choice, U128};
+
+    /// Bit queries agree with the `u128` intrinsics, including for zero and out-of-range indices.
+    #[kani::proof]
+    #[kani::unwind(5)]
+    fn uint_bit_queries_correct() {
+        let (a, index): (u128, u32) = kani::any();
+        let ua = U128::from_u128(a);
+
+        let bit = index < U128::BITS && (a >> index) & 1 == 1;
+        assert_eq!(ua.bit(index).to_bool(), bit);
+        assert_eq!(ua.bit_vartime(index), bit);
+
+        let bits = U128::BITS - a.leading_zeros();
+        assert_eq!(ua.bits(), bits);
+        assert_eq!(ua.bits_vartime(), bits);
+        assert_eq!(ua.leading_zeros(), a.leading_zeros());
+        assert_eq!(ua.leading_zeros_vartime(), a.leading_zeros());
+        assert_eq!(ua.trailing_zeros(), a.trailing_zeros());
+        assert_eq!(ua.trailing_zeros_vartime(), a.trailing_zeros());
+        assert_eq!(ua.trailing_ones(), a.trailing_ones());
+        assert_eq!(ua.trailing_ones_vartime(), a.trailing_ones());
+    }
+
+    /// The constant-time setter changes only the bit at `index` (a no-op for out-of-range
+    /// indices); the vartime setter agrees for in-range indices.
+    #[kani::proof]
+    #[kani::unwind(5)]
+    fn uint_set_bit_correct() {
+        let (a, index, value): (u128, u32, bool) = kani::any();
+        let ua = U128::from_u128(a);
+        let choice = if value { Choice::TRUE } else { Choice::FALSE };
+
+        let expected = match 1u128.checked_shl(index) {
+            Some(mask) if value => a | mask,
+            Some(mask) => a & !mask,
+            None => a,
+        };
+        assert_eq!(u128::from(ua.set_bit(index, choice)), expected);
+        if index < U128::BITS {
+            assert_eq!(u128::from(ua.set_bit_vartime(index, value)), expected);
+        }
+    }
+
+    /// Clears the bits at and above `len`, for every `u32` length.
+    #[kani::proof]
+    #[kani::unwind(5)]
+    fn uint_restrict_bits_correct() {
+        let (a, len): (u128, u32) = kani::any();
+        let mask = 1u128.checked_shl(len).map_or(u128::MAX, |bit| bit - 1);
+        assert_eq!(u128::from(U128::from_u128(a).restrict_bits(len)), a & mask);
+    }
+}

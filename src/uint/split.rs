@@ -50,6 +50,50 @@ impl<const LIMBS: usize> Uint<LIMBS> {
     }
 }
 
+#[cfg(kani)]
+mod kani_proofs {
+    use crate::{Uint, Word};
+
+    /// Three symbolic limbs split exactly, truncated, or zero-extended in either output.
+    #[kani::proof]
+    #[kani::unwind(33)] // Array equality may compare all 32 bytes of a four-word output.
+    fn uint_split_resize_word_positions() {
+        let words: [Word; 3] = kani::any();
+        let value = Uint::from_words(words);
+        let (lo, hi) = value.split_resize::<1, 2>();
+        assert_eq!(lo.to_words(), [words[0]]);
+        assert_eq!(hi.to_words(), [words[1], words[2]]);
+
+        let (lo, hi) = value.split_resize::<1, 1>();
+        assert_eq!(lo.to_words(), [words[0]]);
+        assert_eq!(hi.to_words(), [words[1]]);
+
+        let (lo, hi) = value.split_resize::<1, 4>();
+        assert_eq!(lo.to_words(), [words[0]]);
+        assert_eq!(hi.to_words(), [words[1], words[2], 0, 0]);
+
+        let (lo, hi) = value.split_resize::<4, 1>();
+        assert_eq!(lo.to_words(), [words[0], words[1], words[2], 0]);
+        assert_eq!(hi.to_words(), [0]);
+    }
+
+    /// Every three-word input supports 1+2/2+1 splits and rejects 1+1/2+2 dimensions.
+    #[kani::proof]
+    #[kani::unwind(17)] // Array equality may compare all 16 bytes of a two-word output.
+    fn uint_split_checked_dimensions() {
+        let words: [Word; 3] = kani::any();
+        let value = Uint::from_words(words);
+        let (lo, hi) = value.split_checked::<1, 2>().unwrap();
+        assert_eq!(lo.to_words(), [words[0]]);
+        assert_eq!(hi.to_words(), [words[1], words[2]]);
+        let (lo, hi) = value.split_checked::<2, 1>().unwrap();
+        assert_eq!(lo.to_words(), [words[0], words[1]]);
+        assert_eq!(hi.to_words(), [words[2]]);
+        assert!(value.split_checked::<1, 1>().is_none());
+        assert!(value.split_checked::<2, 2>().is_none());
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::{BitOps, U64, U128, U192, U256, Uint};

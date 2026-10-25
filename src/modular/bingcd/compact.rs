@@ -123,3 +123,53 @@ mod tests {
         assert_eq!(compact, target);
     }
 }
+
+#[cfg(kani)]
+mod kani_proofs {
+    use crate::{U64, U128};
+
+    fn bits(x: u128, idx: u32, length: u32) -> u128 {
+        let mask = 1u128.checked_shl(length).map_or(u128::MAX, |bit| bit - 1);
+        x.checked_shr(idx).unwrap_or(0) & mask
+    }
+
+    /// Both section extractors return bits `[idx, idx + length)`, through a narrower (`U64`) and
+    /// an equal-width (`U128`) section type. `idx == BITS` with `length == 0` is excluded: it is
+    /// allowed by the documented precondition but panics (no caller passes it).
+    #[kani::proof]
+    #[kani::unwind(5)]
+    fn section_correct() {
+        let (x, idx, length): (u128, u32, u32) = kani::any();
+        kani::assume(idx < U128::BITS && u64::from(idx) + u64::from(length) <= 128);
+        let ux = U128::from_u128(x);
+
+        if length <= U64::BITS {
+            let expected = bits(x, idx, length) as u64;
+            let s: U64 = ux.section_vartime_length(idx, length);
+            assert_eq!(u64::from(s), expected);
+            let s: U64 = ux.section_vartime(idx, length);
+            assert_eq!(u64::from(s), expected);
+        }
+        let s: U128 = ux.section_vartime_length(idx, length);
+        assert_eq!(u128::from(s), bits(x, idx, length));
+        let s: U128 = ux.section_vartime(idx, length);
+        assert_eq!(u128::from(s), bits(x, idx, length));
+    }
+
+    /// `compact` and `compact_vartime` concatenate bits `[n - K, n)` above bits `[0, K)`, for
+    /// every `n` with `2K <= n <= BITS`.
+    #[kani::proof]
+    #[kani::unwind(5)]
+    fn compact_correct() {
+        const K: u32 = 31;
+        let (x, n): (u128, u32) = kani::any();
+        kani::assume(2 * K <= n && n <= U128::BITS);
+        let ux = U128::from_u128(x);
+
+        let expected = ((bits(x, n - K, K) << K) | bits(x, 0, K)) as u64;
+        let c: U64 = ux.compact::<K, { U64::LIMBS }>(n);
+        assert_eq!(u64::from(c), expected);
+        let c: U64 = ux.compact_vartime::<K, { U64::LIMBS }>(n);
+        assert_eq!(u64::from(c), expected);
+    }
+}

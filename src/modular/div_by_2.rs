@@ -40,3 +40,28 @@ pub(crate) fn div_by_2_boxed_assign(a: &mut BoxedUint, modulus: &Odd<BoxedUint>)
     a.shr1_assign();
     a.set_bit(a.bits_precision() - 1, carry);
 }
+
+#[cfg(kani)]
+mod kani_proofs {
+    use super::div_by_2;
+    use crate::{Odd, U128};
+
+    /// For odd `m` and `a < m`, the result `b` satisfies `b < m` and `2b ≡ a (mod m)`: it is
+    /// `a / 2` for even `a` and `(a + m) / 2` (a 129-bit sum) for odd `a`.
+    #[kani::proof]
+    #[kani::unwind(5)]
+    fn div_by_2_correct() {
+        let (a, m): (u128, u128) = kani::any();
+        kani::assume(m & 1 == 1 && a < m);
+
+        let res = div_by_2(&U128::from_u128(a), &Odd::new(U128::from_u128(m)).unwrap());
+        let expected = if a & 1 == 0 {
+            a >> 1
+        } else {
+            let (sum, carry) = a.overflowing_add(m);
+            (sum >> 1) | (u128::from(carry) << 127)
+        };
+        assert_eq!(u128::from(res), expected);
+        assert!(expected < m);
+    }
+}

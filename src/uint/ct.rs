@@ -74,6 +74,54 @@ impl<const LIMBS: usize> CtSelect for Uint<LIMBS> {
     }
 }
 
+#[cfg(kani)]
+mod kani_proofs {
+    use crate::{Choice, CtAssign, CtEq, CtGt, CtLt, CtSelect, U128};
+
+    #[kani::proof]
+    #[kani::unwind(5)]
+    fn uint_ct_comparisons_u128_correct() {
+        let (a, b): (u128, u128) = kani::any();
+        let (x, y) = (U128::from_u128(a), U128::from_u128(b));
+        assert_eq!(x.ct_eq(&y).to_bool(), a == b);
+        assert_eq!(x.ct_ne(&y).to_bool(), a != b);
+        assert_eq!(x.ct_lt(&y).to_bool(), a < b);
+        assert_eq!(x.ct_gt(&y).to_bool(), a > b);
+    }
+
+    #[kani::proof]
+    #[kani::unwind(5)]
+    fn uint_ct_selection_u128_correct() {
+        let (a, b, flag): (u128, u128, bool) = kani::any();
+        let (x, y) = (U128::from_u128(a), U128::from_u128(b));
+        let choice = if flag { Choice::TRUE } else { Choice::FALSE };
+        let expected = if flag { b } else { a };
+        assert_eq!(u128::from(U128::select(&x, &y, choice)), expected);
+        assert_eq!(u128::from(x.ct_select(&y, choice)), expected);
+        let mut assigned = x;
+        assigned.ct_assign(&y, choice);
+        assert_eq!(u128::from(assigned), expected);
+    }
+
+    #[kani::proof]
+    #[kani::unwind(5)]
+    fn uint_ct_swap_u128_correct() {
+        let (a, b, flag): (u128, u128, bool) = kani::any();
+        let (mut x, mut y) = (U128::from_u128(a), U128::from_u128(b));
+        let choice = if flag { Choice::TRUE } else { Choice::FALSE };
+        U128::conditional_swap(&mut x, &mut y, choice);
+        assert_eq!(
+            (u128::from(x), u128::from(y)),
+            if flag { (b, a) } else { (a, b) }
+        );
+        U128::swap(&mut x, &mut y);
+        assert_eq!(
+            (u128::from(x), u128::from(y)),
+            if flag { (a, b) } else { (b, a) }
+        );
+    }
+}
+
 #[cfg(feature = "subtle")]
 impl<const LIMBS: usize> subtle::ConditionallySelectable for Uint<LIMBS> {
     #[inline]

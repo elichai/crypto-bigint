@@ -198,6 +198,61 @@ impl ShlVartime for BoxedUint {
     }
 }
 
+#[cfg(kani)]
+mod kani_proofs {
+    use crate::uint::boxed::kani_util::{L64, any_boxed, value};
+
+    #[kani::proof]
+    #[kani::unwind(9)]
+    fn boxed_unbounded_shl_correct() {
+        let a = any_boxed::<{ 2 * L64 }>();
+        let n = value(&a);
+        let shift: u32 = kani::any();
+        let expected = if shift >= 128 { 0 } else { n << shift };
+        let ct = a.unbounded_shl(shift);
+        let vt = a.unbounded_shl_vartime(shift);
+        assert_eq!((value(&ct), ct.bits_precision()), (expected, 128));
+        assert_eq!((value(&vt), vt.bits_precision()), (expected, 128));
+        let mut assigned = a;
+        assigned.unbounded_shl_assign_vartime(shift);
+        assert_eq!(value(&assigned), expected);
+    }
+
+    #[kani::proof]
+    #[kani::unwind(9)]
+    fn boxed_overflowing_shl_correct() {
+        let a = any_boxed::<{ 2 * L64 }>();
+        let n = value(&a);
+        let shift: u32 = kani::any();
+        let expected = if shift >= 128 { None } else { Some(n << shift) };
+        assert_eq!(
+            a.overflowing_shl(shift).into_option().map(|r| value(&r)),
+            expected
+        );
+        assert_eq!(
+            a.overflowing_shl_vartime(shift).map(|r| value(&r)),
+            expected
+        );
+        let mut assigned = a;
+        assert_eq!(assigned.overflowing_shl_assign_vartime(shift), shift >= 128);
+        assert_eq!(value(&assigned), expected.unwrap_or(n));
+    }
+
+    #[kani::proof]
+    #[kani::unwind(9)]
+    fn boxed_wrapping_shl_and_shl1_correct() {
+        let a = any_boxed::<{ 2 * L64 }>();
+        let n = value(&a);
+        let shift: u32 = kani::any();
+        let expected = n.wrapping_shl(shift);
+        assert_eq!(value(&a.wrapping_shl(shift)), expected);
+        assert_eq!(value(&a.wrapping_shl_vartime(shift)), expected);
+        let (shifted, carry) = a.shl1();
+        assert_eq!(value(&shifted), n << 1);
+        assert_eq!(u128::from(carry.0), n >> 127);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::BoxedUint;

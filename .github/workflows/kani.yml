@@ -1,0 +1,110 @@
+name: Kani
+
+on:
+  pull_request:
+  push:
+    branches: [master, elichai/kani-proofs-ci]
+  workflow_dispatch:
+    inputs:
+      pending:
+        description: Also run the explicitly unproved obligations (may fail)
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: kani-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  runner-tests:
+    name: Kani runner tests
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - run: python3 scripts/kani-ci-test.py -v
+
+  proofs:
+    name: Kani Word${{ matrix.word }} shard ${{ matrix.shard }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        word: [64, 32]
+        shard: [0, 1, 2, 3]
+    steps:
+      - uses: actions/checkout@v7
+      - name: Cache Kani release, toolchain, and Cargo downloads
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.kani/kani-0.68.0
+            ~/.rustup/toolchains/nightly-*
+            ~/.cargo/bin/cargo-kani
+            ~/.cargo/bin/kani
+            ~/.cargo/.crates.toml
+            ~/.cargo/.crates2.json
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: kani-v1-${{ runner.os }}-${{ runner.arch }}-0.68.0-${{ hashFiles('Cargo.lock', 'Cargo.toml') }}
+      - name: Install pinned Kani
+        uses: model-checking/kani-github-action@69d357bade1eb7b32bc3fc3d5c3d173c5bfa5237 # v1
+        with:
+          kani-version: '0.68.0'
+          command: cargo-kani --version
+      - name: Install Z3 for harness solver attributes
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y z3
+      - name: Verify active library proofs
+        run: python3 scripts/kani-ci.py --word ${{ matrix.word }} --shard ${{ matrix.shard }} --shards 4 --output kani-results
+      - name: Preserve inventory, selection, results, and logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kani-word${{ matrix.word }}-shard${{ matrix.shard }}
+          path: kani-results/
+          if-no-files-found: error
+
+  pending:
+    name: Unproved Kani Word${{ matrix.word }} (diagnostic)
+    if: github.event_name == 'workflow_dispatch' && inputs.pending
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        word: [64, 32]
+    steps:
+      - uses: actions/checkout@v7
+      - name: Restore Kani and Cargo downloads
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.kani/kani-0.68.0
+            ~/.rustup/toolchains/nightly-*
+            ~/.cargo/bin/cargo-kani
+            ~/.cargo/bin/kani
+            ~/.cargo/.crates.toml
+            ~/.cargo/.crates2.json
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: kani-v1-${{ runner.os }}-${{ runner.arch }}-0.68.0-${{ hashFiles('Cargo.lock', 'Cargo.toml') }}
+      - uses: model-checking/kani-github-action@69d357bade1eb7b32bc3fc3d5c3d173c5bfa5237 # v1
+        with:
+          kani-version: '0.68.0'
+          command: cargo-kani --version
+      - run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y z3
+      - name: Retry pending obligations without masking failures
+        run: python3 scripts/kani-ci.py --word ${{ matrix.word }} --mode pending --timeout 600 --output kani-results
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kani-pending-word${{ matrix.word }}
+          path: kani-results/
+          if-no-files-found: error

@@ -17,6 +17,37 @@ impl<const LIMBS: usize> Int<LIMBS> {
     }
 }
 
+#[cfg(kani)]
+mod kani_proofs {
+    use crate::{I64, I128, I256, Limb};
+
+    #[kani::proof]
+    #[kani::unwind(9)]
+    fn int_resize_sign_extension_native() {
+        let x: i128 = kani::any();
+        let wide = I128::from_i128(x).resize::<{ I256::LIMBS }>();
+        assert_eq!(i128::from(wide.resize::<{ I128::LIMBS }>()), x);
+        let words = wide.as_limbs();
+        let mut i = I128::LIMBS;
+        while i < I256::LIMBS {
+            assert_eq!(words[i], if x < 0 { Limb::MAX } else { Limb::ZERO });
+            i += 1;
+        }
+    }
+
+    #[kani::proof]
+    #[kani::unwind(5)]
+    fn int_resize_truncation_native() {
+        let x: i128 = kani::any();
+        let narrow: I64 = I128::from_i128(x).resize();
+        assert_eq!(i64::from(narrow), x as i64);
+        assert_eq!(
+            i128::from(narrow.resize::<{ I128::LIMBS }>()),
+            (x as i64) as i128
+        );
+    }
+}
+
 #[cfg(test)]
 mod tests {
 

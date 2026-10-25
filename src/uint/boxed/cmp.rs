@@ -40,6 +40,34 @@ impl<Rhs: AsRef<UintRef> + ?Sized> PartialOrd<Rhs> for BoxedUint {
     }
 }
 
+#[cfg(kani)]
+mod kani_proofs {
+    use crate::uint::boxed::kani_util::{L64, any_boxed, value};
+    use crate::{CtEq, CtGt, CtLt};
+
+    /// Numeric order ignores precision and agrees with zero-extended native values.
+    #[kani::proof]
+    #[kani::unwind(5)]
+    fn boxed_cmp_mixed_width_correct() {
+        let (a, b) = (any_boxed::<L64>(), any_boxed::<{ 2 * L64 }>());
+        let (va, vb) = (value(&a), value(&b));
+        assert_eq!(a.cmp(&b), va.cmp(&vb));
+        assert_eq!(b.cmp(&a), vb.cmp(&va));
+        assert_eq!(a.cmp_vartime(&b), va.cmp(&vb));
+        assert_eq!(b.cmp_vartime(&a), vb.cmp(&va));
+        assert_eq!(a.partial_cmp(&b), Some(va.cmp(&vb)));
+        assert_eq!(b.partial_cmp(&a), Some(vb.cmp(&va)));
+        assert_eq!(a.ct_eq(&b).to_bool(), va == vb);
+        assert_eq!(b.ct_eq(&a).to_bool(), va == vb);
+        assert_eq!(a.ct_lt(&b).to_bool(), va < vb);
+        assert_eq!(b.ct_lt(&a).to_bool(), vb < va);
+        assert_eq!(a.ct_gt(&b).to_bool(), va > vb);
+        assert_eq!(b.ct_gt(&a).to_bool(), vb > va);
+        assert_eq!(a == b, va == vb);
+        assert_eq!(a.is_zero_vartime(), va == 0);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::BoxedUint;

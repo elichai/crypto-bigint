@@ -523,3 +523,116 @@ mod tests {
         assert_eq!(U128::MAX.wrapping_mul_limb(Limb::MAX), max_lo);
     }
 }
+
+#[cfg(kani)]
+mod kani_proofs {
+    use crate::{Limb, U64, U128, Word};
+
+    fn native_product(a: u64, b: u64) -> u128 {
+        if Limb::BITS == 32 {
+            let (a_lo, a_hi) = (u64::from(a as u32), a >> 32);
+            let (b_lo, b_hi) = (u64::from(b as u32), b >> 32);
+            // Expand (a_lo + 2^32·a_hi)(b_lo + 2^32·b_hi); the full product fits u128.
+            u128::from(a_lo * b_lo)
+                + ((u128::from(a_lo * b_hi) + u128::from(a_hi * b_lo)) << 32)
+                + (u128::from(a_hi * b_hi) << 64)
+        } else {
+            u128::from(a) * u128::from(b)
+        }
+    }
+
+    /// Wide multiplication agrees with the exact native product for all 64-bit operands.
+    /// Separate wide, wrapping, and overflow properties to keep their solver circuits independent.
+    #[kani::proof]
+    #[kani::solver(z3)]
+    #[kani::unwind(5)]
+    fn uint_mul_u64_correct() {
+        let (a, b): (u64, u64) = kani::any();
+        let (ua, ub) = (U64::from_u64(a), U64::from_u64(b));
+        let wide = native_product(a, b);
+
+        let (lo, hi) = ua.widening_mul(&ub);
+        assert_eq!(
+            (u64::from(lo), u64::from(hi)),
+            (wide as u64, (wide >> 64) as u64)
+        );
+        let product: U128 = ua.concatenating_mul(&ub);
+        assert_eq!(u128::from(product), wide);
+    }
+
+    /// A single-limb multiplier covers one carry step on 64-bit words and two on 32-bit words.
+    #[kani::proof]
+    #[kani::solver(z3)]
+    #[kani::unwind(3)]
+    fn uint_mul_limb_u64_correct() {
+        let (a, b): (u64, Word) = kani::any();
+        let ua = U64::from_u64(a);
+        let wide = native_product(a, u64::from(b));
+        let (res, carry) = ua.overflowing_mul_limb(Limb(b));
+        assert_eq!(u64::from(res), wide as u64);
+        assert_eq!(u128::from(carry.0), wide >> 64);
+        assert_eq!(ua.wrapping_mul_limb(Limb(b)), res);
+    }
+
+    #[kani::proof]
+    #[kani::solver(z3)]
+    #[kani::unwind(5)]
+    fn uint_wrapping_mul_u64_correct() {
+        let (a, b): (u64, u64) = kani::any();
+        assert_eq!(
+            u64::from(U64::from_u64(a).wrapping_mul(&U64::from_u64(b))),
+            native_product(a, b) as u64
+        );
+    }
+
+    // Forced 32-bit words need CaDiCaL here; Z3 exceeds 110 seconds for this overflow circuit.
+    #[kani::proof]
+    #[cfg_attr(cpubits = "32", kani::solver(cadical))]
+    #[cfg_attr(not(cpubits = "32"), kani::solver(z3))]
+    #[kani::unwind(5)]
+    fn uint_checked_saturating_mul_u64_correct() {
+        let (a, b): (u64, u64) = kani::any();
+        let (ua, ub) = (U64::from_u64(a), U64::from_u64(b));
+        let fits = u64::try_from(native_product(a, b)).ok();
+        assert_eq!(u64::from(ua.saturating_mul(&ub)), fits.unwrap_or(u64::MAX));
+        assert_eq!(
+            Option::<U64>::from(ua.checked_mul(&ub)).map(u64::from),
+            fits
+        );
+    }
+
+    /// 64-bit squaring agrees with the `u128` square.
+    // Z3 avoids the SAT multiplier-equivalence bottleneck without weakening the native oracle.
+    #[kani::proof]
+    #[kani::solver(z3)]
+    #[kani::unwind(5)]
+    #[allow(deprecated)]
+    fn uint_square_u64_correct() {
+        let a: u64 = kani::any();
+        let ua = U64::from_u64(a);
+        // For a = lo + 2^32·hi, a² = lo² + 2^33·lo·hi + 2^64·hi² < 2^128.
+        // This exact native identity lets 32-bit words share the limb multipliers.
+        let wide = if Limb::BITS == 32 {
+            let (lo, hi) = (u64::from(a as u32), a >> 32);
+            u128::from(lo * lo) + (u128::from(lo * hi) << 33) + (u128::from(hi * hi) << 64)
+        } else {
+            u128::from(a) * u128::from(a)
+        };
+        let fits = u64::try_from(wide).ok();
+
+        let (lo, hi) = ua.widening_square();
+        assert_eq!(
+            (u64::from(lo), u64::from(hi)),
+            (wide as u64, (wide >> 64) as u64)
+        );
+        assert_eq!(ua.square_wide(), (lo, hi));
+        let square: U128 = ua.concatenating_square();
+        assert_eq!(u128::from(square), wide);
+        assert_eq!(u64::from(ua.wrapping_square()), wide as u64);
+        assert_eq!(u64::from(ua.saturating_square()), fits.unwrap_or(u64::MAX));
+        assert_eq!(
+            Option::<U64>::from(ua.checked_square()).map(u64::from),
+            fits
+        );
+    }
+}

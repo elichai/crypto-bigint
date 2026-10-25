@@ -285,3 +285,56 @@ mod tests {
         assert_eq!(u, limb_with_bits_at(&[2, 8]));
     }
 }
+
+#[cfg(kani)]
+mod kani_proofs {
+    use crate::{Choice, Limb, Word};
+
+    #[kani::proof]
+    fn limb_bit_counts_correct() {
+        let x: Word = kani::any();
+        assert_eq!(Limb(x).bits(), Word::BITS - x.leading_zeros());
+        assert_eq!(Limb(x).leading_zeros(), x.leading_zeros());
+        assert_eq!(Limb(x).trailing_zeros(), x.trailing_zeros());
+        assert_eq!(Limb(x).trailing_ones(), x.trailing_ones());
+    }
+
+    #[kani::proof]
+    fn limb_bitwise_correct() {
+        let (a, b): (Word, Word) = kani::any();
+        assert_eq!(Limb(a).bitand(Limb(b)).0, a & b);
+        assert_eq!(Limb(a).bitor(Limb(b)).0, a | b);
+        assert_eq!(Limb(a).bitxor(Limb(b)).0, a ^ b);
+        assert_eq!(Limb(a).not().0, !a);
+    }
+
+    /// The constant-time and vartime getters agree, including for out-of-range indices.
+    #[kani::proof]
+    fn bit_correct() {
+        let (x, index): (Word, u32) = kani::any();
+        let expected = index < Limb::BITS && (x >> index) & 1 == 1;
+        assert_eq!(Limb(x).bit(index).to_bool(), expected);
+        assert_eq!(Limb(x).bit_vartime(index), expected);
+    }
+
+    /// For in-range indices, both setters change only the bit at `index`.
+    #[kani::proof]
+    fn set_bit_correct() {
+        let (x, index, value): (Word, u32, bool) = kani::any();
+        kani::assume(index < Limb::BITS);
+        let mask: Word = 1 << index;
+        let expected = if value { x | mask } else { x & !mask };
+        let choice = if value { Choice::TRUE } else { Choice::FALSE };
+        assert_eq!(Limb(x).set_bit(index, choice).0, expected);
+        assert_eq!(Limb(x).set_bit_vartime(index, value).0, expected);
+    }
+
+    /// Clears the bits at and above `len`, for `len < Limb::BITS` (the range all in-crate callers
+    /// use). For `len >= Limb::BITS` the shift wraps: `restrict_bits(Limb::BITS)` returns zero.
+    #[kani::proof]
+    fn restrict_bits_correct() {
+        let (x, len): (Word, u32) = kani::any();
+        kani::assume(len < Limb::BITS);
+        assert_eq!(Limb(x).restrict_bits(len).0, x & ((1 << len) - 1));
+    }
+}

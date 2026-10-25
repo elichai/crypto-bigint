@@ -23,6 +23,20 @@ impl<const LIMBS: usize> Not for Int<LIMBS> {
     }
 }
 
+#[cfg(kani)]
+mod kani_proofs {
+    use crate::I128;
+
+    #[kani::proof]
+    #[kani::unwind(5)]
+    fn int_bitnot_native() {
+        let x: i128 = kani::any();
+        let value = I128::from_i128(x);
+        assert_eq!(i128::from(value.not()), !x);
+        assert_eq!(i128::from(!value), !x);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::I128;

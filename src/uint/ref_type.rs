@@ -13,6 +13,72 @@ mod slice;
 mod sqrt;
 mod sub;
 
+/// Independent native representation for proofs with at most two limbs.
+#[cfg(kani)]
+pub(crate) mod kani_util {
+    use crate::{Limb, WideWord};
+
+    pub(crate) fn value(limbs: &[Limb]) -> WideWord {
+        assert!(limbs.len() <= 2);
+        let mut n = 0;
+        for (i, limb) in limbs.iter().enumerate() {
+            n |= (limb.0 as WideWord) << (i as u32 * Limb::BITS);
+        }
+        n
+    }
+
+    /// Check the active value and preserve storage outside the borrowed prefix.
+    pub(crate) fn check(out: &[Limb; 2], original: &[Limb; 2], len: usize, expected: WideWord) {
+        assert_eq!(value(&out[..len]), expected);
+        for i in len..2 {
+            assert_eq!(out[i], original[i]);
+        }
+    }
+
+    pub(crate) fn mask(bits: u32) -> WideWord {
+        if bits == 0 {
+            0
+        } else {
+            WideWord::MAX >> (WideWord::BITS - bits)
+        }
+    }
+}
+
+#[cfg(kani)]
+mod kani_proofs {
+    use super::{
+        UintRef,
+        kani_util::{check, mask, value},
+    };
+    use crate::{Limb, Word};
+
+    /// Left carry is 0/1; right carry holds the outgoing bit in the Word's MSB.
+    #[kani::proof]
+    #[kani::unwind(4)]
+    fn uint_ref_single_bit_shifts_mixed_lengths() {
+        let original = kani::any::<[Word; 2]>().map(Limb);
+        let len: usize = kani::any();
+        kani::assume(len <= 2);
+        let bits = len as u32 * Word::BITS;
+        let n = value(&original[..len]);
+        let mut out = original;
+        let carry = UintRef::new_mut(&mut out[..len]).shl1_assign();
+        check(&out, &original, len, (n << 1) & mask(bits));
+        assert_eq!(
+            carry.0,
+            if bits == 0 {
+                0
+            } else {
+                (n >> (bits - 1)) as Word
+            }
+        );
+        let mut out = original;
+        let carry = UintRef::new_mut(&mut out[..len]).shr1_assign();
+        check(&out, &original, len, n >> 1);
+        assert_eq!(carry.0, ((n as Word) & 1) << (Word::BITS - 1));
+    }
+}
+
 use crate::{Choice, Limb, NonZero, Odd, Uint, Word};
 use core::{
     fmt,

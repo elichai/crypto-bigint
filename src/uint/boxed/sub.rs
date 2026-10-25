@@ -201,6 +201,146 @@ impl SubAssign<u128> for BoxedUint {
     }
 }
 
+#[cfg(kani)]
+mod kani_proofs {
+    use crate::uint::boxed::kani_util::{L64, any_boxed, value};
+    use crate::{BoxedUint, CheckedSub, Limb, Word, Wrapping};
+
+    fn assert_value(result: &BoxedUint, expected: u128, bits: u32) {
+        assert_eq!(value(result), expected);
+        assert_eq!(result.bits_precision(), bits);
+    }
+
+    fn borrowing<const N: usize, const M: usize>() {
+        let (mut lhs, rhs) = (any_boxed::<N>(), any_boxed::<M>());
+        let borrow: Word = kani::any();
+        let bits = N.max(M) as u32 * Limb::BITS;
+        // A borrow word contributes its MSB; the output is a full-word mask.
+        let incoming = u128::from(borrow >> (Word::BITS - 1));
+        let (difference, underflow1) = value(&lhs).overflowing_sub(value(&rhs));
+        let (difference, underflow2) = difference.overflowing_sub(incoming);
+        let expected = if bits == 64 {
+            difference & u128::from(u64::MAX)
+        } else {
+            difference
+        };
+        let expected_borrow = Word::from(underflow1 || underflow2).wrapping_neg();
+
+        let (result, borrow_out) = lhs.borrowing_sub(&rhs, Limb(borrow));
+        assert_value(&result, expected, bits);
+        assert_eq!(borrow_out.0, expected_borrow);
+        if N >= M {
+            let borrow_out = lhs.borrowing_sub_assign(&rhs, Limb(borrow));
+            assert_value(&lhs, expected, bits);
+            assert_eq!(borrow_out.0, expected_borrow);
+        }
+    }
+
+    #[kani::proof]
+    fn boxed_sub_borrowing_64() {
+        borrowing::<L64, L64>();
+    }
+
+    #[kani::proof]
+    fn boxed_sub_borrowing_128() {
+        borrowing::<{ 2 * L64 }, { 2 * L64 }>();
+    }
+
+    /// Borrowing subtraction zero-extends the shorter operand in either order.
+    #[kani::proof]
+    fn boxed_sub_borrowing_mixed() {
+        borrowing::<L64, { 2 * L64 }>();
+        borrowing::<{ 2 * L64 }, L64>();
+    }
+
+    fn forms<const N: usize, const M: usize, const GROUP: u8>() {
+        let (lhs, rhs) = (any_boxed::<N>(), any_boxed::<M>());
+        let bits = N as u32 * Limb::BITS;
+        let mask = if bits == 64 {
+            u128::from(u64::MAX)
+        } else {
+            u128::MAX
+        };
+        let (difference, underflow) = value(&lhs).overflowing_sub(value(&rhs));
+        let expected = difference & mask;
+
+        if GROUP == 0 {
+            let (result, actual_underflow) = lhs.underflowing_sub(&rhs);
+            assert_value(&result, expected, bits);
+            assert_eq!(actual_underflow.to_bool(), underflow);
+            assert_value(&lhs.wrapping_sub(&rhs), expected, bits);
+            let checked = lhs.checked_sub(&rhs);
+            assert_eq!(checked.is_some().to_bool(), !underflow);
+            if !underflow {
+                assert_value(&checked.unwrap(), expected, bits);
+            }
+        }
+        if GROUP == 1 {
+            let mut assigned = lhs.clone();
+            assert_eq!(assigned.underflowing_sub_assign(&rhs).to_bool(), underflow);
+            assert_value(&assigned, expected, bits);
+            let mut wrapped = Wrapping(lhs.clone());
+            wrapped -= &rhs;
+            assert_value(&wrapped.0, expected, bits);
+            if !underflow {
+                let mut assigned = lhs;
+                assigned -= &rhs;
+                assert_value(&assigned, expected, bits);
+            }
+        } else if GROUP == 2 && !underflow {
+            assert_value(&(&lhs - &rhs), expected, bits);
+            assert_value(&(lhs - &rhs), expected, bits);
+        }
+    }
+
+    // Separate API groups keep the number of live heap objects small for CBMC.
+    macro_rules! prove_forms {
+        ($plain:ident, $assign:ident, $operators:ident, $n:expr, $m:expr) => {
+            #[kani::proof]
+            fn $plain() {
+                forms::<{ $n }, { $m }, 0>();
+            }
+            #[kani::proof]
+            fn $assign() {
+                forms::<{ $n }, { $m }, 1>();
+            }
+            #[kani::proof]
+            fn $operators() {
+                forms::<{ $n }, { $m }, 2>();
+            }
+        };
+    }
+
+    prove_forms!(
+        boxed_sub_forms_64,
+        boxed_sub_assign_64,
+        boxed_sub_operators_64,
+        L64,
+        L64
+    );
+    prove_forms!(
+        boxed_sub_forms_128,
+        boxed_sub_assign_128,
+        boxed_sub_operators_128,
+        2 * L64,
+        2 * L64
+    );
+    prove_forms!(
+        boxed_sub_forms_wider_rhs,
+        boxed_sub_assign_wider_rhs,
+        boxed_sub_operators_wider_rhs,
+        L64,
+        2 * L64
+    );
+    prove_forms!(
+        boxed_sub_forms_shorter_rhs,
+        boxed_sub_assign_shorter_rhs,
+        boxed_sub_operators_shorter_rhs,
+        2 * L64,
+        L64
+    );
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {

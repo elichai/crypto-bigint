@@ -129,3 +129,28 @@ mod tests {
         assert_ne!(true, I128::MIN < I128::MIN);
     }
 }
+
+#[cfg(kani)]
+mod kani_proofs {
+    use crate::{CtEq, CtGt, CtLt, I128, Int};
+
+    #[kani::proof]
+    #[kani::unwind(5)]
+    fn int_cmp_correct() {
+        let (a, b): (i128, i128) = kani::any();
+        let (ia, ib) = (I128::from_i128(a), I128::from_i128(b));
+
+        assert_eq!(ia.cmp(&ib), a.cmp(&b));
+        assert_eq!(ia.cmp_vartime(&ib), a.cmp(&b));
+        assert_eq!(ia == ib, a == b);
+        assert_eq!(Int::eq(&ia, &ib).to_bool(), a == b);
+        assert_eq!(ia.ct_eq(&ib).to_bool(), a == b);
+        assert_eq!(Int::lt(&ia, &ib).to_bool(), a < b);
+        assert_eq!(Int::gt(&ia, &ib).to_bool(), a > b);
+        assert_eq!(ia.ct_lt(&ib).to_bool(), a < b);
+        assert_eq!(ia.ct_gt(&ib).to_bool(), a > b);
+        assert_eq!(ia.is_nonzero().to_bool(), a != 0);
+        assert_eq!(ia.is_min().to_bool(), a == i128::MIN);
+        assert_eq!(ia.is_max().to_bool(), a == i128::MAX);
+    }
+}

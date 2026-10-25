@@ -97,6 +97,163 @@ fn mac_by_limb(a: &UintRef, b: &UintRef, c: Limb, carry: Limb) -> (BoxedUint, Li
     (res, carry)
 }
 
+#[cfg(kani)]
+mod kani_proofs {
+    use super::mac_by_limb;
+    use crate::uint::boxed::kani_util::{L64, any_boxed, value};
+    use crate::{BoxedUint, Limb, NonZero, Word};
+
+    fn native_product(a: u64, b: u64) -> u128 {
+        if Word::BITS == 32 {
+            let (a_lo, a_hi) = (u64::from(a as u32), a >> 32);
+            let (b_lo, b_hi) = (u64::from(b as u32), b >> 32);
+            // Exact a*b; native radix-2^32 carries share multiplier circuits with the implementation.
+            let p00 = a_lo * b_lo;
+            let p01 = a_lo * b_hi + (p00 >> 32);
+            let p10 = a_hi * b_lo + u64::from(p01 as u32);
+            let p11 = a_hi * b_hi + (p01 >> 32) + (p10 >> 32);
+            u128::from(p00 as u32) | (u128::from(p10 as u32) << 32) | (u128::from(p11) << 64)
+        } else {
+            u128::from(a) * u128::from(b)
+        }
+    }
+
+    /// All 64-bit operands and full-word multiplier/carry; the total fits u128.
+    #[kani::proof]
+    #[cfg_attr(cpubits = "32", kani::solver(cadical))]
+    #[cfg_attr(not(cpubits = "32"), kani::solver(z3))]
+    #[kani::unwind(6)]
+    fn boxed_mac_by_limb_64() {
+        let (a, b) = (any_boxed::<L64>(), any_boxed::<L64>());
+        let (c, carry): (Word, Word) = kani::any();
+        let expected = value(&a) + native_product(value(&b) as u64, c as u64) + u128::from(carry);
+        let (result, high) = mac_by_limb(a.as_uint_ref(), b.as_uint_ref(), Limb(c), Limb(carry));
+        assert_eq!(result.bits_precision(), 64);
+        assert_eq!(value(&result), u128::from(expected as u64));
+        assert_eq!(u128::from(high.0), expected >> 64);
+    }
+
+    /// The former one-limb c=0 regression, with its exact input and result.
+    #[kani::proof]
+    #[kani::unwind(140)]
+    fn boxed_mul_mod_special_zero_c_regression() {
+        let result =
+            BoxedUint::from(Limb(3)).mul_mod_special(&BoxedUint::from(Limb(7)), Limb::ZERO);
+        assert_eq!(result, BoxedUint::from(Limb(21)));
+    }
+
+    /// Every word-sized pair, including values whose product overflows a word.
+    #[kani::proof]
+    #[kani::unwind(140)]
+    fn boxed_mul_mod_special_zero_one_word() {
+        let (a, b): (Word, Word) = kani::any();
+        let result =
+            BoxedUint::from(Limb(a)).mul_mod_special(&BoxedUint::from(Limb(b)), Limb::ZERO);
+        assert_eq!(result.bits_precision(), Word::BITS);
+        assert_eq!(result, BoxedUint::from(Limb(a.wrapping_mul(b))));
+    }
+
+    /// Word-sized operands in two-word storage, with an exact native product oracle.
+    #[kani::proof]
+    #[kani::solver(cadical)]
+    #[kani::unwind(6)]
+    fn boxed_mul_mod_special_zero_two_words() {
+        let (a, b): (Word, Word) = kani::any();
+        let lhs = BoxedUint::from_words([a, 0]);
+        let rhs = BoxedUint::from_words([b, 0]);
+        let result = lhs.mul_mod_special(&rhs, Limb::ZERO);
+        assert_eq!(result.bits_precision(), 2 * Word::BITS);
+        assert_eq!(value(&result), u128::from(a) * u128::from(b));
+    }
+
+    /// The same carry boundary as the fixed-width regression, through boxed reduction.
+    #[kani::proof]
+    #[kani::unwind(10)]
+    fn boxed_mul_mod_special_max_carry() {
+        let a = BoxedUint::from_words([0, Word::MAX - 1, Word::MAX]);
+        let result = a.mul_mod_special(&a, Limb::MAX);
+        assert_eq!(result.bits_precision(), 3 * Word::BITS);
+        assert_eq!(result, BoxedUint::from_words([1, 2, 1]));
+    }
+
+    /// For p=B^3-B+1 and d=B+k, check k=0, 1, MAX with independent result words.
+    #[kani::proof]
+    #[kani::unwind(10)]
+    fn boxed_mul_mod_special_max_c_three_word_boundaries() {
+        let (a, expected) = match kani::any::<u8>() {
+            0 => ([1, Word::MAX - 1, Word::MAX], [0, 0, 1]),
+            1 => ([0, Word::MAX - 1, Word::MAX], [1, 2, 1]),
+            _ => ([2, Word::MAX - 2, Word::MAX], [1, Word::MAX - 3, 3]),
+        };
+        let a = BoxedUint::from_words(a);
+        let result = a.mul_mod_special(&a, Limb::MAX);
+        assert_eq!(result.bits_precision(), 3 * Word::BITS);
+        assert_eq!(result, BoxedUint::from_words(expected));
+    }
+
+    /// Every reduced u64 pair modulo 2^64-1, including the multi-limb reduction on 32-bit words.
+    #[kani::proof]
+    #[cfg_attr(cpubits = "32", kani::solver(cadical))]
+    #[cfg_attr(not(cpubits = "32"), kani::solver(z3))]
+    #[kani::unwind(140)]
+    fn boxed_mul_mod_special_64_mersenne() {
+        let (a, b) = (any_boxed::<L64>(), any_boxed::<L64>());
+        let modulus = u128::from(u64::MAX);
+        kani::assume(value(&a) < modulus && value(&b) < modulus);
+        // Both are exact a*b; retain the measured native expression for each word width.
+        let product = if Word::BITS == 32 {
+            native_product(value(&a) as u64, value(&b) as u64)
+        } else {
+            value(&a) * value(&b)
+        };
+        // Since 2^64 ≡ 1 (mod m), folding then subtracting computes product % m.
+        // Reduced inputs give folded < 2m, so one subtraction replaces a costly division oracle.
+        let folded = (product & modulus) + (product >> 64);
+        let expected = if folded >= modulus {
+            folded - modulus
+        } else {
+            folded
+        };
+        let result = a.mul_mod_special(&b, Limb::ONE);
+        assert_eq!(result.bits_precision(), 64);
+        assert_eq!(value(&result), expected);
+        assert!(value(&result) < modulus);
+    }
+
+    /// Full u8 operands in 64-bit storage; u16 operands modulo 65521 timed out with both solvers.
+    #[kani::proof]
+    #[kani::solver(cadical)]
+    #[kani::unwind(140)]
+    fn boxed_mul_mod_u8_fixed_prime() {
+        let (a, b): (u8, u8) = kani::any();
+        let modulus = NonZero::new(BoxedUint::from(251u64)).unwrap();
+        let result =
+            BoxedUint::from(u64::from(a)).mul_mod(&BoxedUint::from(u64::from(b)), &modulus);
+        assert_eq!(result.bits_precision(), 64);
+        assert_eq!(
+            value(&result),
+            u128::from(u64::from(a) * u64::from(b) % 251)
+        );
+    }
+
+    /// Both square APIs, for every u16 in 64-bit storage and modulus 65521.
+    #[kani::proof]
+    #[kani::solver(cadical)]
+    #[kani::unwind(140)]
+    fn boxed_square_mod_u16_fixed_prime() {
+        let n: u16 = kani::any();
+        let a = BoxedUint::from(u64::from(n));
+        let modulus = NonZero::new(BoxedUint::from(65521u64)).unwrap();
+        let expected = u128::from(u64::from(n) * u64::from(n) % 65521);
+        let result = a.square_mod(&modulus);
+        assert_eq!(result.bits_precision(), 64);
+        assert_eq!(value(&result), expected);
+        let result = a.square_mod_vartime(&modulus);
+        assert_eq!(result.bits_precision(), 64);
+        assert_eq!(value(&result), expected);
+    }
+}
+
 #[cfg(all(test, feature = "rand_core"))]
 mod tests {
     use crate::{BoxedUint, ConcatenatingMul, Limb, NonZero, Random, RandomMod, Resize};

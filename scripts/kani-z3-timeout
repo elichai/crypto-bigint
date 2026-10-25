@@ -1,0 +1,3 @@
+#!/bin/sh
+# Kani 0.68 can orphan Z3 on timeout; bound each solver process's lifetime too.
+exec z3 -T:110 "$@"

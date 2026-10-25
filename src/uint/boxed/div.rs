@@ -349,6 +349,158 @@ impl<Rhs: Unsigned> RemMixed<Rhs> for BoxedUint {
     }
 }
 
+#[cfg(kani)]
+mod kani_proofs {
+    use super::{BoxedUint, Limb, NonZero, Reciprocal, Wrapping};
+    use crate::uint::boxed::kani_util::{L64, any_boxed, value};
+
+    fn assert_value(actual: &BoxedUint, expected: u128, precision: u32) {
+        assert_eq!(value(actual), expected);
+        assert_eq!(actual.bits_precision(), precision);
+    }
+
+    // Full dividend domains; fixed power-of-two divisors keep the division circuits tractable.
+    #[kani::proof]
+    #[kani::unwind(129)]
+    fn boxed_div_limb_power_of_two() {
+        let n = any_boxed::<L64>();
+        let divisor = NonZero::new(Limb(1 << (Limb::BITS - 1))).unwrap();
+        let d = u128::from(divisor.as_ref().0);
+        let reciprocal = Reciprocal::new(divisor);
+        let (q, r) = n.div_rem_limb_with_reciprocal(&reciprocal);
+        assert_value(&q, value(&n) / d, 64);
+        assert_eq!(u128::from(r.0), value(&n) % d);
+        assert_eq!(u128::from(n.rem_limb(divisor).0), value(&n) % d);
+    }
+
+    fn check_div_rem(n: BoxedUint, divisor: BoxedUint) {
+        let (n_value, d_value) = (value(&n), value(&divisor));
+        let (n_bits, d_bits) = (n.bits_precision(), divisor.bits_precision());
+        let divisor = NonZero::new(divisor).unwrap();
+        let (q, r) = n.div_rem(&divisor);
+        assert_value(&q, n_value / d_value, n_bits);
+        assert_value(&r, n_value % d_value, d_bits);
+        let (q, r) = n.div_rem_vartime(&divisor);
+        assert_value(&q, n_value / d_value, n_bits);
+        assert_value(&r, n_value % d_value, d_bits);
+    }
+
+    #[kani::proof]
+    #[kani::unwind(129)]
+    fn boxed_div_rem_power_of_two_same_precision() {
+        check_div_rem(any_boxed::<{ 2 * L64 }>(), BoxedUint::from(1u128 << 127));
+    }
+
+    #[kani::proof]
+    #[kani::unwind(129)]
+    fn boxed_div_rem_power_of_two_wider_rhs() {
+        check_div_rem(any_boxed::<L64>(), BoxedUint::from(1u128 << 64));
+    }
+
+    #[kani::proof]
+    #[kani::unwind(129)]
+    fn boxed_rem_power_of_two_same_precision() {
+        let n = any_boxed::<{ 2 * L64 }>();
+        let divisor = NonZero::new(BoxedUint::from(1u128 << 127)).unwrap();
+        let expected = value(&n) % (1u128 << 127);
+        assert_value(&n.rem(&divisor), expected, 128);
+        assert_value(&n.rem_vartime(&divisor), expected, 128);
+    }
+
+    fn check_exact(n: BoxedUint, divisor: BoxedUint, shift: u32) {
+        let n_value = value(&n);
+        let bits = n.bits_precision();
+        let exact = n_value & ((1u128 << shift) - 1) == 0;
+        let divisor = NonZero::new(divisor).unwrap();
+        let result = n.div_exact(&divisor);
+        assert_eq!(result.is_some().to_bool(), exact);
+        if exact {
+            assert_value(&result.unwrap(), n_value >> shift, bits);
+        }
+        let result = n.div_exact_vartime(&divisor);
+        assert_eq!(result.is_some().to_bool(), exact);
+        if exact {
+            assert_value(&result.unwrap(), n_value >> shift, bits);
+        }
+    }
+
+    // Symbolic shifts include exact and inexact inputs and shifts across limb boundaries.
+    #[kani::proof]
+    #[kani::unwind(129)]
+    fn boxed_div_exact_power_of_two_shorter_rhs() {
+        let shift: u32 = kani::any();
+        kani::assume(shift < 64);
+        check_exact(
+            any_boxed::<{ 2 * L64 }>(),
+            BoxedUint::from(1u64 << shift),
+            shift,
+        );
+    }
+
+    #[kani::proof]
+    #[kani::unwind(129)]
+    fn boxed_div_exact_power_of_two_wider_rhs() {
+        let shift: u32 = kani::any();
+        kani::assume(shift < 128);
+        check_exact(any_boxed::<L64>(), BoxedUint::from(1u128 << shift), shift);
+    }
+
+    // Odd-divisor coverage is bounded to u16 dividends in 64-bit storage.
+    #[kani::proof]
+    #[kani::unwind(129)]
+    fn boxed_div_rem_exact_three_u16() {
+        let native = u64::from(kani::any::<u16>());
+        check_div_rem(BoxedUint::from(native), BoxedUint::from(3u128));
+        let n = BoxedUint::from(native);
+        let divisor = NonZero::new(BoxedUint::from(3u128)).unwrap();
+        let exact = native % 3 == 0;
+        let result = n.div_exact(&divisor);
+        assert_eq!(result.is_some().to_bool(), exact);
+        if exact {
+            assert_value(&result.unwrap(), u128::from(native / 3), 64);
+        }
+        let result = n.div_exact_vartime(&divisor);
+        assert_eq!(result.is_some().to_bool(), exact);
+        if exact {
+            assert_value(&result.unwrap(), u128::from(native / 3), 64);
+        }
+    }
+
+    // A zero or fixed nonzero divisor exercises both checked-division validity outcomes.
+    #[kani::proof]
+    #[kani::unwind(129)]
+    fn boxed_checked_div_zero_or_power_of_two() {
+        let n = any_boxed::<L64>();
+        let nonzero: bool = kani::any();
+        let d = BoxedUint::from(if nonzero { 1u128 << 63 } else { 0 });
+        let result = n.checked_div(&d);
+        assert_eq!(result.is_some().to_bool(), nonzero);
+        if nonzero {
+            assert_value(&result.unwrap(), value(&n) / (1u128 << 63), 64);
+        }
+    }
+
+    #[kani::proof]
+    #[kani::unwind(129)]
+    fn boxed_div_rem_operators_power_of_two() {
+        let n = any_boxed::<L64>();
+        let (q, r) = (value(&n) / (1u128 << 63), value(&n) % (1u128 << 63));
+        let d = NonZero::new(BoxedUint::from(1u128 << 63)).unwrap();
+        assert_value(&(&n / &d), q, 64);
+        assert_value(&(&n % &d), r, 128);
+        let mut assigned = n.clone();
+        assigned /= d.clone();
+        assert_value(&assigned, q, 64);
+        let mut assigned = n.clone();
+        assigned %= d.clone();
+        assert_value(&assigned, r, 128);
+        assert_value(&n.wrapping_div_vartime(&d), q, 64);
+        let mut wrapped = Wrapping(n);
+        wrapped /= &d;
+        assert_value(&wrapped.0, q, 64);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{BoxedUint, Limb, NonZero};

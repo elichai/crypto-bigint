@@ -1525,3 +1525,77 @@ mod tests {
         );
     }
 }
+
+#[cfg(kani)]
+mod kani_proofs {
+    use super::{decode_hex_byte, decode_nibble};
+    use crate::U128;
+
+    fn hex_digit(byte: u8) -> Option<u8> {
+        char::from(byte).to_digit(16).map(|d| d as u8)
+    }
+
+    /// The branch-free decoder accepts exactly the ASCII hex digits (either case).
+    #[kani::proof]
+    fn decode_hex_correct() {
+        let byte: u8 = kani::any();
+        assert_eq!(
+            decode_nibble(byte),
+            hex_digit(byte).map_or(u16::MAX, u16::from)
+        );
+
+        let bytes: [u8; 2] = kani::any();
+        let (value, err) = decode_hex_byte(bytes);
+        match (hex_digit(bytes[0]), hex_digit(bytes[1])) {
+            (Some(hi), Some(lo)) => assert_eq!((value, err), ((hi << 4) | lo, 0)),
+            _ => assert_ne!(err, 0),
+        }
+    }
+
+    /// Fixed-size byte encodings agree with `u128`. This also checks the `unsafe` word-to-byte
+    /// slice casts in `EncodedUint` for memory safety.
+    #[kani::proof]
+    #[kani::unwind(17)]
+    fn uint_bytes_roundtrip() {
+        let x: u128 = kani::any();
+        let ux = U128::from_u128(x);
+        assert_eq!(ux.to_be_bytes().as_slice(), &x.to_be_bytes());
+        assert_eq!(ux.to_le_bytes().as_slice(), &x.to_le_bytes());
+
+        let bytes: [u8; 16] = kani::any();
+        assert_eq!(
+            u128::from(U128::from_be_slice(&bytes)),
+            u128::from_be_bytes(bytes)
+        );
+        assert_eq!(
+            u128::from(U128::from_le_slice(&bytes)),
+            u128::from_le_bytes(bytes)
+        );
+    }
+
+    /// For every input of up to 20 bytes (longer than a `U128`) and every precision up to 128
+    /// bits, the truncating decoders return the input value modulo `2^bits_precision`.
+    #[kani::proof]
+    #[kani::unwind(21)]
+    fn uint_from_slice_truncated_correct() {
+        let (buf, len, bits): ([u8; 20], usize, u32) = kani::any();
+        kani::assume(len <= buf.len() && bits <= U128::BITS);
+        let bytes = &buf[..len];
+        let mask = 1u128.checked_shl(bits).map_or(u128::MAX, |bit| bit - 1);
+
+        // Only the least significant 16 bytes matter modulo `2^128`.
+        let mut be = 0u128;
+        let mut le = 0u128;
+        for (i, byte) in bytes.iter().enumerate() {
+            be = (be << 8) | u128::from(*byte);
+            if i < 16 {
+                le |= u128::from(*byte) << (8 * i);
+            }
+        }
+
+        let res = U128::from_be_slice_truncated(bytes, bits);
+        assert_eq!(u128::from(res), be & mask);
+        let res = U128::from_le_slice_truncated(bytes, bits);
+        assert_eq!(u128::from(res), le & mask);
+    }
+}

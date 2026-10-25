@@ -40,6 +40,75 @@ impl Gcd<BoxedUint> for Odd<BoxedUint> {
     }
 }
 
+#[cfg(kani)]
+mod kani_proofs {
+    use crate::uint::boxed::kani_util::{L64, any_boxed, value};
+    use crate::{BoxedUint, Gcd, Word};
+
+    /// `gcd(0, x) = x`, with the maximum operand precision, including `x = 0`.
+    #[kani::proof]
+    #[kani::unwind(9)]
+    fn boxed_gcd_vartime_zero_lhs_mixed_precision() {
+        let (narrow, wide) = (any_boxed::<L64>(), any_boxed::<{ 2 * L64 }>());
+        let (vn, vw) = (value(&narrow), value(&wide));
+        let zero_narrow = BoxedUint::zero_with_precision(64);
+        let zero_wide = BoxedUint::zero_with_precision(128);
+        let result = zero_narrow.gcd_vartime(&wide);
+        assert_eq!((value(&result), result.bits_precision()), (vw, 128));
+        let result = zero_wide.gcd_vartime(&narrow);
+        assert_eq!((value(&result), result.bits_precision()), (vn, 128));
+    }
+
+    /// `gcd(x, 0) = x`, even when trailing zeros exceed the zero operand's precision.
+    /// Split operand precisions so each proof contains only one normalization path.
+    #[kani::proof]
+    #[kani::unwind(9)]
+    fn boxed_gcd_vartime_zero_narrow_rhs() {
+        let wide = any_boxed::<{ 2 * L64 }>();
+        let expected = value(&wide);
+        let zero_narrow = BoxedUint::zero_with_precision(64);
+        let result = wide.gcd_vartime(&zero_narrow);
+        assert_eq!((value(&result), result.bits_precision()), (expected, 128));
+    }
+
+    /// `gcd(x, 0) = x`, widened to the zero operand's precision when necessary.
+    #[kani::proof]
+    #[kani::unwind(9)]
+    fn boxed_gcd_vartime_zero_wide_rhs() {
+        let narrow = any_boxed::<L64>();
+        let expected = value(&narrow);
+        let zero_wide = BoxedUint::zero_with_precision(128);
+        let result = narrow.gcd_vartime(&zero_wide);
+        assert_eq!((value(&result), result.bits_precision()), (expected, 128));
+    }
+
+    /// Every odd input at the selected precision; both mixed-precision results have 128 bits.
+    fn check_odd_zero<const N: usize>(zero_bits: u32) {
+        let mut words: [Word; N] = kani::any();
+        words[0] |= 1;
+        let input = BoxedUint::from_words(words);
+        let expected = value(&input);
+        let odd = input.to_odd().unwrap();
+        let zero = BoxedUint::zero_with_precision(zero_bits);
+        let result = odd.gcd_vartime(&zero).get();
+        assert_eq!((value(&result), result.bits_precision()), (expected, 128));
+    }
+
+    #[kani::proof]
+    #[kani::unwind(9)]
+    #[kani::solver(z3)]
+    fn boxed_gcd_vartime_odd_zero_wide_rhs() {
+        check_odd_zero::<L64>(128);
+    }
+
+    #[kani::proof]
+    #[kani::unwind(9)]
+    #[kani::solver(z3)]
+    fn boxed_gcd_vartime_odd_zero_narrow_rhs() {
+        check_odd_zero::<{ 2 * L64 }>(64);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::{BoxedUint, Gcd, Limb, Resize};

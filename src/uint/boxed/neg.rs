@@ -39,6 +39,40 @@ impl WrappingNeg for BoxedUint {
     }
 }
 
+#[cfg(kani)]
+mod kani_proofs {
+    use crate::uint::boxed::kani_util::{L64, any_boxed, value};
+    use crate::{Choice, CtNeg};
+
+    /// Negation wraps modulo `2^128`; complement flips exactly the 128 stored bits.
+    #[kani::proof]
+    #[kani::unwind(5)]
+    fn boxed_neg_and_not_correct() {
+        let mut a = any_boxed::<{ 2 * L64 }>();
+        let n = value(&a);
+        let negated = a.wrapping_neg();
+        assert_eq!(
+            (value(&negated), negated.bits_precision()),
+            (n.wrapping_neg(), 128)
+        );
+        let complemented = a.not();
+        assert_eq!(
+            (value(&complemented), complemented.bits_precision()),
+            (!n, 128)
+        );
+        let condition: bool = kani::any();
+        let choice = if condition {
+            Choice::TRUE
+        } else {
+            Choice::FALSE
+        };
+        let expected = if condition { n.wrapping_neg() } else { n };
+        assert_eq!(value(&a.ct_neg(choice)), expected);
+        a.ct_neg_assign(choice);
+        assert_eq!(value(&a), expected);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::{BoxedUint, Choice, CtNeg};

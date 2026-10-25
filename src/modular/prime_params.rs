@@ -123,6 +123,38 @@ impl<const LIMBS: usize> CtEq for PrimeParams<LIMBS> {
 }
 impl<const LIMBS: usize> CtEqSlice for PrimeParams<LIMBS> {}
 
+#[cfg(all(test, kani))]
+mod kani_regressions {
+    use super::PrimeParams;
+    use crate::{Choice, CtAssign, CtEq, CtSelect, Odd, U64, modular::FixedMontyParams};
+
+    const THREE: PrimeParams<{ U64::LIMBS }> = PrimeParams::new_vartime(
+        &FixedMontyParams::new_vartime(Odd::<U64>::from_be_hex("0000000000000003")),
+        2,
+    );
+    const SEVEN: PrimeParams<{ U64::LIMBS }> = PrimeParams::new_vartime(
+        &FixedMontyParams::new_vartime(Odd::<U64>::from_be_hex("0000000000000007")),
+        3,
+    );
+
+    /// Public construction and conditional assignment must copy the target's decomposition.
+    #[kani::proof]
+    #[kani::unwind(3)]
+    fn regression_prime_params_ct_assign_copies_t() {
+        let mut assigned = THREE;
+        assigned.ct_assign(&SEVEN, Choice::TRUE);
+        assert_eq!(assigned.t(), SEVEN.t());
+    }
+
+    /// A public selection can create equal-comparing parameters with different public `t`.
+    #[kani::proof]
+    #[kani::unwind(3)]
+    fn regression_prime_params_ct_eq_observes_t() {
+        let selected = THREE.ct_select(&SEVEN, Choice::TRUE);
+        assert!(!selected.ct_eq(&SEVEN).to_bool() || selected.t() == SEVEN.t());
+    }
+}
+
 #[cfg(feature = "subtle")]
 impl<const LIMBS: usize> subtle::ConstantTimeEq for PrimeParams<LIMBS> {
     fn ct_eq(&self, other: &Self) -> subtle::Choice {

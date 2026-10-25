@@ -92,3 +92,23 @@ mod tests {
         assert_eq!(expected, actual);
     }
 }
+
+#[cfg(kani)]
+mod kani_proofs {
+    use crate::NonZero;
+    use crate::uint::boxed::kani_util::{L64, any_boxed, value};
+
+    /// For equal precisions and `a < p`, `neg_mod` returns `-a mod p`. A `p` wider than `self` is
+    /// excluded: then `neg_mod(0)` only clears the low `self.nlimbs()` limbs in release builds.
+    #[kani::proof]
+    #[kani::unwind(5)]
+    fn boxed_neg_mod_correct() {
+        let (a, p) = (any_boxed::<{ 2 * L64 }>(), any_boxed::<{ 2 * L64 }>());
+        let (va, vp) = (value(&a), value(&p));
+        kani::assume(va < vp);
+
+        let res = a.neg_mod(&NonZero::new(p).unwrap());
+        assert_eq!(value(&res), if va == 0 { 0 } else { vp - va });
+        assert_eq!(res.bits_precision(), 128);
+    }
+}

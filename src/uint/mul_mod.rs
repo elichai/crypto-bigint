@@ -110,6 +110,48 @@ const fn mac_by_limb<const LIMBS: usize>(
     (a, carry)
 }
 
+#[cfg(kani)]
+mod kani_proofs {
+    use crate::{Limb, Uint, Word};
+
+    /// The former max-carry regression, with its exact three-word input and result.
+    #[kani::proof]
+    #[kani::unwind(10)]
+    fn mul_mod_special_max_carry() {
+        let a = Uint::<3>::from_words([0, Word::MAX - 1, Word::MAX]);
+        assert_eq!(
+            a.mul_mod_special(&a, Limb::MAX),
+            Uint::<3>::from_words([1, 2, 1])
+        );
+    }
+
+    /// Every two-word pair: c=0 reduces modulo the full storage radix.
+    #[kani::proof]
+    #[cfg_attr(cpubits = "32", kani::solver(cadical))]
+    #[cfg_attr(not(cpubits = "32"), kani::solver(z3))]
+    #[kani::unwind(6)]
+    fn mul_mod_special_zero_two_words() {
+        let a = Uint::<2>::from_words(kani::any());
+        let b = Uint::<2>::from_words(kani::any());
+        assert_eq!(a.mul_mod_special(&b, Limb::ZERO), a.wrapping_mul(&b));
+    }
+
+    /// For p=B^3-B+1 and d=B+k, check k=0, 1, MAX with independent result words.
+    #[kani::proof]
+    #[kani::unwind(10)]
+    fn mul_mod_special_max_c_three_word_boundaries() {
+        let (a, expected) = match kani::any::<u8>() {
+            0 => ([1, Word::MAX - 1, Word::MAX], [0, 0, 1]),
+            1 => ([0, Word::MAX - 1, Word::MAX], [1, 2, 1]),
+            _ => ([2, Word::MAX - 2, Word::MAX], [1, Word::MAX - 3, 3]),
+        };
+        assert_eq!(
+            Uint::<3>::from_words(a).mul_mod_special(&Uint::from_words(a), Limb::MAX),
+            Uint::from_words(expected)
+        );
+    }
+}
+
 #[cfg(all(test, feature = "rand_core"))]
 mod tests {
     use crate::{Limb, NonZero, Random, RandomMod, Uint};

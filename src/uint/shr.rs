@@ -400,3 +400,74 @@ mod tests {
         );
     }
 }
+
+#[cfg(kani)]
+mod kani_proofs {
+    use crate::{Limb, U64, U128, Word};
+
+    /// All `U128` right-shift variants agree with `u128`, for every `u32` shift.
+    #[kani::proof]
+    #[kani::unwind(9)]
+    fn uint_shr_correct() {
+        let (a, shift): (u128, u32) = kani::any();
+        let ua = U128::from_u128(a);
+        let checked = a.checked_shr(shift);
+
+        assert_eq!(
+            Option::<U128>::from(ua.overflowing_shr(shift)).map(u128::from),
+            checked
+        );
+        assert_eq!(ua.overflowing_shr_vartime(shift).map(u128::from), checked);
+        assert_eq!(u128::from(ua.unbounded_shr(shift)), checked.unwrap_or(0));
+        assert_eq!(
+            u128::from(ua.unbounded_shr_vartime(shift)),
+            checked.unwrap_or(0)
+        );
+        assert_eq!(u128::from(ua.wrapping_shr(shift)), a.wrapping_shr(shift));
+        assert_eq!(
+            u128::from(ua.wrapping_shr_vartime(shift)),
+            a.wrapping_shr(shift)
+        );
+        if shift < U128::BITS {
+            assert_eq!(u128::from(ua.shr(shift)), a >> shift);
+            assert_eq!(u128::from(ua.shr_vartime(shift)), a >> shift);
+
+            let bound: u32 = kani::any();
+            kani::assume(shift < bound && bound <= U128::BITS);
+            assert_eq!(u128::from(ua.bounded_shr(shift, bound)), a >> shift);
+        }
+    }
+
+    /// The internal limb-shift helpers shift in `carry` at the top and return the shifted-out
+    /// bits, moved to the top of a limb.
+    #[kani::proof]
+    #[kani::unwind(9)]
+    fn uint_shr_limb_with_carry_correct() {
+        let (a, shift, carry): (u128, u32, Word) = kani::any();
+        kani::assume(shift < Limb::BITS);
+        let ua = U128::from_u128(a);
+
+        let (res, out) = ua.shr_limb_with_carry(shift, Limb(carry));
+        if shift == 0 {
+            assert_eq!((u128::from(res), out.0), (a, 0));
+        } else {
+            kani::assume(carry << (Limb::BITS - shift) >> (Limb::BITS - shift) == 0);
+            let carry_top = u128::from(carry) << (U128::BITS - Limb::BITS);
+            assert_eq!(u128::from(res), (a >> shift) | carry_top);
+            assert_eq!(out.0, (a as Word) << (Limb::BITS - shift));
+        }
+
+        assert_eq!(u128::from(ua.shr1()), a >> 1);
+    }
+
+    /// The wide shift agrees with `u128` on a `(U64, U64)` pair.
+    #[kani::proof]
+    #[kani::unwind(9)]
+    fn uint_shr_vartime_wide_correct() {
+        let (a, shift): (u128, u32) = kani::any();
+        let lower_upper = (U64::from_u64(a as u64), U64::from_u64((a >> 64) as u64));
+        let res = U64::overflowing_shr_vartime_wide(lower_upper, shift)
+            .map(|(lo, hi)| u128::from(u64::from(lo)) | (u128::from(u64::from(hi)) << 64));
+        assert_eq!(res, a.checked_shr(shift));
+    }
+}

@@ -171,6 +171,30 @@ impl SquareMod for Limb {
     }
 }
 
+#[cfg(kani)]
+mod kani_proofs {
+    use crate::{CheckedMul, Limb, WideWord, Word};
+
+    /// Check both halves of the product and the exact checked/saturating overflow condition.
+    #[kani::proof]
+    fn limb_mul_variants_correct() {
+        let (a, b): (Word, Word) = kani::any();
+        let product = WideWord::from(a) * WideWord::from(b);
+        let (lo, hi) = Limb(a).widening_mul(Limb(b));
+        assert_eq!(crate::word::join(lo.0, hi.0), product);
+        assert_eq!(Limb(a).wrapping_mul(Limb(b)).0, product as Word);
+        let fits = product <= WideWord::from(Word::MAX);
+        assert_eq!(
+            Option::<Limb>::from(Limb(a).checked_mul(&Limb(b))).map(|v| v.0),
+            if fits { Some(product as Word) } else { None }
+        );
+        assert_eq!(
+            Limb(a).saturating_mul(Limb(b)).0,
+            if fits { product as Word } else { Word::MAX }
+        );
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{CheckedMul, Limb};

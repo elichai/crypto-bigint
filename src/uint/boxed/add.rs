@@ -219,6 +219,222 @@ impl AddAssign<u128> for BoxedUint {
     }
 }
 
+#[cfg(kani)]
+mod kani_proofs {
+    use crate::uint::boxed::kani_util::{L64, any_boxed, value};
+    use crate::{BoxedUint, CheckedAdd, Choice, Limb, Word, Wrapping};
+
+    fn assert_value(result: &BoxedUint, expected: u128, bits: u32) {
+        assert_eq!(value(result), expected);
+        assert_eq!(result.bits_precision(), bits);
+    }
+
+    fn concatenating<const N: usize, const M: usize>() {
+        let (lhs, rhs) = (any_boxed::<N>(), any_boxed::<M>());
+        let limbs = N.max(M);
+        let bits = limbs as u32 * Word::BITS;
+        let (sum, overflow) = value(&lhs).overflowing_add(value(&rhs));
+        let carry = if bits == 64 {
+            (sum >> 64) as Word
+        } else {
+            Word::from(overflow)
+        };
+        let result = lhs.concatenating_add(&rhs);
+        assert_eq!(result.nlimbs(), limbs + 1);
+        assert_eq!(result.bits_precision(), bits + Word::BITS);
+        // The full sum can have 129 bits, so compare low limbs and the extra limb separately.
+        for i in 0..limbs {
+            assert_eq!(
+                result.as_limbs()[i].0,
+                (sum >> (i as u32 * Word::BITS)) as Word
+            );
+        }
+        assert_eq!(result.as_limbs()[limbs].0, carry);
+    }
+
+    #[kani::proof]
+    #[kani::unwind(8)]
+    fn boxed_concatenating_add_64() {
+        concatenating::<L64, L64>();
+    }
+
+    #[kani::proof]
+    #[kani::unwind(8)]
+    fn boxed_concatenating_add_128() {
+        concatenating::<{ 2 * L64 }, { 2 * L64 }>();
+    }
+
+    #[kani::proof]
+    #[kani::unwind(8)]
+    fn boxed_concatenating_add_mixed() {
+        concatenating::<L64, { 2 * L64 }>();
+        concatenating::<{ 2 * L64 }, L64>();
+    }
+
+    fn conditional<const N: usize, const M: usize>() {
+        let (mut lhs, rhs) = (any_boxed::<N>(), any_boxed::<M>());
+        let enabled: bool = kani::any();
+        let bits = N as u32 * Word::BITS;
+        let mask = u128::MAX >> (u128::BITS - bits);
+        let (sum, overflow) = if enabled {
+            value(&lhs).overflowing_add(value(&rhs))
+        } else {
+            (value(&lhs), false)
+        };
+        let carry =
+            lhs.conditional_carrying_add_assign(&rhs, Choice::from_u8_lsb(u8::from(enabled)));
+        assert_value(&lhs, sum & mask, bits);
+        assert_eq!(carry.to_bool(), overflow || sum > mask);
+    }
+
+    #[kani::proof]
+    #[kani::unwind(8)]
+    fn boxed_conditional_add_64() {
+        conditional::<L64, L64>();
+    }
+
+    #[kani::proof]
+    #[kani::unwind(8)]
+    fn boxed_conditional_add_128() {
+        conditional::<{ 2 * L64 }, { 2 * L64 }>();
+    }
+
+    /// The in-place API requires the RHS to fit the destination's storage width.
+    #[kani::proof]
+    #[kani::unwind(8)]
+    fn boxed_conditional_add_shorter_rhs() {
+        conditional::<{ 2 * L64 }, L64>();
+    }
+
+    fn carrying<const N: usize, const M: usize>() {
+        let (mut lhs, rhs) = (any_boxed::<N>(), any_boxed::<M>());
+        let carry: Word = kani::any();
+        let bits = (N.max(M) as u32) * Limb::BITS;
+        let (sum, overflow1) = value(&lhs).overflowing_add(value(&rhs));
+        let (sum, overflow2) = sum.overflowing_add(u128::from(carry));
+        let (expected, expected_carry) = if bits == 64 {
+            (sum & u128::from(u64::MAX), (sum >> 64) as Word)
+        } else {
+            (sum, Word::from(overflow1) + Word::from(overflow2))
+        };
+
+        let (result, carry_out) = lhs.carrying_add(&rhs, Limb(carry));
+        assert_value(&result, expected, bits);
+        assert_eq!(carry_out.0, expected_carry);
+        if N >= M {
+            let carry_out = lhs.carrying_add_assign(&rhs, Limb(carry));
+            assert_value(&lhs, expected, bits);
+            assert_eq!(carry_out.0, expected_carry);
+        }
+    }
+
+    /// Any incoming word is added in full; carry-out and precision match the native oracle.
+    #[kani::proof]
+    fn boxed_add_carrying_64() {
+        carrying::<L64, L64>();
+    }
+
+    #[kani::proof]
+    fn boxed_add_carrying_128() {
+        carrying::<{ 2 * L64 }, { 2 * L64 }>();
+    }
+
+    /// Carrying addition zero-extends the shorter operand in either order.
+    #[kani::proof]
+    fn boxed_add_carrying_mixed() {
+        carrying::<L64, { 2 * L64 }>();
+        carrying::<{ 2 * L64 }, L64>();
+    }
+
+    fn forms<const N: usize, const M: usize, const GROUP: u8>() {
+        let (lhs, rhs) = (any_boxed::<N>(), any_boxed::<M>());
+        let bits = N as u32 * Limb::BITS;
+        let mask = if bits == 64 {
+            u128::from(u64::MAX)
+        } else {
+            u128::MAX
+        };
+        let (sum, native_overflow) = value(&lhs).overflowing_add(value(&rhs));
+        let expected = sum & mask;
+        let overflow = native_overflow || sum > mask;
+
+        if GROUP == 0 {
+            let (result, actual_overflow) = lhs.overflowing_add(&rhs);
+            assert_value(&result, expected, bits);
+            assert_eq!(actual_overflow.to_bool(), overflow);
+            assert_value(&lhs.wrapping_add(&rhs), expected, bits);
+            let checked = lhs.checked_add(&rhs);
+            assert_eq!(checked.is_some().to_bool(), !overflow);
+            if !overflow {
+                assert_value(&checked.unwrap(), expected, bits);
+            }
+        }
+        if GROUP == 1 {
+            let mut assigned = lhs.clone();
+            assert_eq!(assigned.overflowing_add_assign(&rhs).to_bool(), overflow);
+            assert_value(&assigned, expected, bits);
+            let mut wrapped = Wrapping(lhs.clone());
+            wrapped += &rhs;
+            assert_value(&wrapped.0, expected, bits);
+            if !overflow {
+                let mut assigned = lhs;
+                assigned += &rhs;
+                assert_value(&assigned, expected, bits);
+            }
+        } else if GROUP == 2 && !overflow {
+            assert_value(&(&lhs + &rhs), expected, bits);
+            assert_value(&(lhs + &rhs), expected, bits);
+        }
+    }
+
+    // Separate API groups keep the number of live heap objects small for CBMC.
+    macro_rules! prove_forms {
+        ($plain:ident, $assign:ident, $operators:ident, $n:expr, $m:expr) => {
+            #[kani::proof]
+            fn $plain() {
+                forms::<{ $n }, { $m }, 0>();
+            }
+            #[kani::proof]
+            fn $assign() {
+                forms::<{ $n }, { $m }, 1>();
+            }
+            #[kani::proof]
+            fn $operators() {
+                forms::<{ $n }, { $m }, 2>();
+            }
+        };
+    }
+
+    prove_forms!(
+        boxed_add_forms_64,
+        boxed_add_assign_64,
+        boxed_add_operators_64,
+        L64,
+        L64
+    );
+    prove_forms!(
+        boxed_add_forms_128,
+        boxed_add_assign_128,
+        boxed_add_operators_128,
+        2 * L64,
+        2 * L64
+    );
+    prove_forms!(
+        boxed_add_forms_wider_rhs,
+        boxed_add_assign_wider_rhs,
+        boxed_add_operators_wider_rhs,
+        L64,
+        2 * L64
+    );
+    prove_forms!(
+        boxed_add_forms_shorter_rhs,
+        boxed_add_assign_shorter_rhs,
+        boxed_add_operators_shorter_rhs,
+        2 * L64,
+        L64
+    );
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {

@@ -75,6 +75,34 @@ impl<const LIMBS: usize> BitXorAssign<&Int<LIMBS>> for Int<LIMBS> {
     }
 }
 
+#[cfg(kani)]
+mod kani_proofs {
+    use crate::I128;
+
+    #[kani::proof]
+    #[kani::unwind(5)]
+    fn int_bitxor_native() {
+        let (a, b): (i128, i128) = kani::any();
+        let (ia, ib) = (I128::from_i128(a), I128::from_i128(b));
+        assert_eq!(i128::from(ia.bitxor(&ib)), a ^ b);
+        assert_eq!(i128::from(ia.wrapping_xor(&ib)), a ^ b);
+        assert_eq!(
+            Option::<I128>::from(ia.checked_xor(&ib)).map(i128::from),
+            Some(a ^ b)
+        );
+        assert_eq!(i128::from(ia ^ ib), a ^ b);
+        assert_eq!(i128::from(&ia ^ ib), a ^ b);
+        assert_eq!(i128::from(ia ^ &ib), a ^ b);
+        assert_eq!(i128::from(&ia ^ &ib), a ^ b);
+        let mut assigned = ia;
+        assigned ^= ib;
+        assert_eq!(i128::from(assigned), a ^ b);
+        assigned = ia;
+        assigned ^= &ib;
+        assert_eq!(i128::from(assigned), a ^ b);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::I128;

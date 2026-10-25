@@ -66,3 +66,134 @@ impl UintRef {
         self.check_mul_overflow(self, carry)
     }
 }
+
+#[cfg(kani)]
+mod kani_proofs {
+    use crate::{Limb, UintRef, WideWord, Word};
+
+    /// Full-word inputs and zero-initialized one- or two-word output buffers.
+    #[kani::proof]
+    #[kani::unwind(5)]
+    fn uint_ref_wrapping_mul_word_zeroed_output() {
+        let (a, b): (Word, Word) = kani::any();
+        let len: usize = kani::any();
+        kani::assume(len == 1 || len == 2);
+        let mut out = [Limb::ZERO; 2];
+        let carry = UintRef::new(&[Limb(a)])
+            .wrapping_mul(UintRef::new(&[Limb(b)]), UintRef::new_mut(&mut out[..len]));
+        let product = a as WideWord * b as WideWord;
+        assert_eq!(out[0].0, product as Word);
+        assert_eq!(
+            out[1].0,
+            if len == 2 {
+                (product >> Word::BITS) as Word
+            } else {
+                0
+            }
+        );
+        assert_eq!(
+            carry.0,
+            if len == 1 {
+                (product >> Word::BITS) as Word
+            } else {
+                0
+            }
+        );
+    }
+
+    #[kani::proof]
+    #[kani::solver(z3)]
+    #[kani::unwind(5)]
+    fn uint_ref_square_word_zeroed_output() {
+        let a: Word = kani::any();
+        let mut narrow = [Limb::ZERO];
+        let mut wide = [Limb::ZERO; 2];
+        let value = [Limb(a)];
+        let value = UintRef::new(&value);
+        let overflow = value.overflowing_square(UintRef::new_mut(&mut narrow));
+        let carry = value.wrapping_square(UintRef::new_mut(&mut wide));
+        let product = a as WideWord * a as WideWord;
+        assert_eq!(narrow[0].0, product as Word);
+        assert_eq!(wide[0].0, product as Word);
+        assert_eq!(wide[1].0, (product >> Word::BITS) as Word);
+        assert_eq!(overflow.to_bool(), product >> Word::BITS != 0);
+        assert_eq!(carry, Limb::ZERO);
+    }
+
+    #[kani::proof]
+    #[kani::solver(z3)]
+    #[kani::unwind(4)]
+    fn uint_ref_overflowing_mul_word_zeroed_output() {
+        let (a, b): (Word, Word) = kani::any();
+        let mut out = [Limb::ZERO];
+        let overflow = UintRef::new(&[Limb(a)])
+            .overflowing_mul(UintRef::new(&[Limb(b)]), UintRef::new_mut(&mut out));
+        let product = a as WideWord * b as WideWord;
+        assert_eq!(out[0].0, product as Word);
+        assert_eq!(overflow.to_bool(), product >> Word::BITS != 0);
+    }
+}
+
+/// Desired public contracts; run separately with `cargo kani --tests --harness regression_uint_ref`.
+#[cfg(all(test, kani))]
+mod kani_regressions {
+    use crate::{Limb, UintRef};
+
+    #[kani::proof]
+    #[kani::unwind(5)]
+    fn regression_uint_ref_mul_overwrites_output() {
+        let mut out = [Limb::ONE];
+        UintRef::new(&[Limb::ONE])
+            .wrapping_mul(UintRef::new(&[Limb::ONE]), UintRef::new_mut(&mut out));
+        assert!(out[0].0 == 1);
+    }
+
+    #[kani::proof]
+    #[kani::unwind(5)]
+    fn regression_uint_ref_square_overwrites_output() {
+        let mut out = [Limb::ONE];
+        UintRef::new(&[Limb::ONE]).wrapping_square(UintRef::new_mut(&mut out));
+        assert!(out[0].0 == 1);
+    }
+
+    #[kani::proof]
+    #[kani::unwind(6)]
+    fn regression_uint_ref_mul_overflow_uses_wide_output_width() {
+        let value = [Limb::ZERO, Limb::ONE];
+        let mut out = [Limb::ZERO; 4];
+        let overflow =
+            UintRef::new(&value).overflowing_mul(UintRef::new(&value), UintRef::new_mut(&mut out));
+        assert_eq!(out, [Limb::ZERO, Limb::ZERO, Limb::ONE, Limb::ZERO]);
+        assert!(!overflow.to_bool());
+    }
+
+    #[kani::proof]
+    #[kani::unwind(6)]
+    fn regression_uint_ref_mul_overflow_uses_narrow_output_width() {
+        let mut out = [Limb::ZERO];
+        let overflow = UintRef::new(&[Limb::ZERO, Limb::ONE])
+            .overflowing_mul(UintRef::new(&[Limb::ONE]), UintRef::new_mut(&mut out));
+        assert_eq!(out, [Limb::ZERO]);
+        assert!(overflow.to_bool());
+    }
+
+    #[kani::proof]
+    #[kani::unwind(6)]
+    fn regression_uint_ref_square_overflow_uses_wide_output_width() {
+        let mut out = [Limb::ZERO; 4];
+        let overflow =
+            UintRef::new(&[Limb::ZERO, Limb::ONE]).overflowing_square(UintRef::new_mut(&mut out));
+        assert_eq!(out, [Limb::ZERO, Limb::ZERO, Limb::ONE, Limb::ZERO]);
+        assert!(!overflow.to_bool());
+    }
+
+    #[kani::proof]
+    #[kani::unwind(6)]
+    fn regression_uint_ref_square_overflow_uses_narrow_output_width() {
+        let mut out = [Limb::ZERO];
+        let overflow = UintRef::new(&[Limb::ONE, Limb::ONE, Limb::ZERO])
+            .overflowing_square(UintRef::new_mut(&mut out));
+        assert_eq!(out, [Limb::ONE]);
+        assert!(overflow.to_bool());
+    }
+}

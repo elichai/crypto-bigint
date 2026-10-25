@@ -86,3 +86,23 @@ mod tests {
         assert_eq!(U256::MAX.wrapping_neg_if(do_not_negate), U256::MAX);
     }
 }
+
+#[cfg(kani)]
+mod kani_proofs {
+    use crate::{Choice, U128};
+
+    #[kani::proof]
+    fn uint_neg_correct() {
+        let (a, flag): (u128, bool) = kani::any();
+        let ua = U128::from_u128(a);
+
+        let (neg, carry) = ua.carrying_neg();
+        assert_eq!(u128::from(neg), a.wrapping_neg());
+        assert_eq!(carry.to_bool(), a == 0);
+        assert_eq!(u128::from(ua.wrapping_neg()), a.wrapping_neg());
+
+        let choice = if flag { Choice::TRUE } else { Choice::FALSE };
+        let expected = if flag { a.wrapping_neg() } else { a };
+        assert_eq!(u128::from(ua.wrapping_neg_if(choice)), expected);
+    }
+}

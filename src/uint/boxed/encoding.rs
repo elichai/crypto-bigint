@@ -306,6 +306,100 @@ impl encoding::DecodeByLimb for VecDecodeByLimb {
     }
 }
 
+#[cfg(kani)]
+mod kani_proofs {
+    use crate::uint::boxed::kani_util::{L64, any_boxed, value};
+    use crate::{BoxedUint, DecodeError};
+
+    // Separate byte orders to halve the heap-decoder formula without restricting input values.
+    #[kani::proof]
+    #[kani::unwind(21)]
+    fn boxed_from_slice_128_be_correct() {
+        check_boxed_from_slice_128::<true>();
+    }
+
+    #[kani::proof]
+    #[kani::unwind(21)]
+    fn boxed_from_slice_128_le_correct() {
+        check_boxed_from_slice_128::<false>();
+    }
+
+    /// Retain the low 128 bits; checked decoders reject oversized slices.
+    fn check_boxed_from_slice_128<const BE: bool>() {
+        let (buf, len): ([u8; 20], usize) = kani::any();
+        kani::assume(len <= buf.len());
+        let bytes = &buf[..len];
+        let mut expected = 0u128;
+        for (i, byte) in bytes.iter().enumerate() {
+            if BE {
+                expected = (expected << 8) | u128::from(*byte);
+            } else if i < 16 {
+                expected |= u128::from(*byte) << (8 * i);
+            }
+        }
+        let decoded = if BE {
+            BoxedUint::from_be_slice_truncated(bytes, 128)
+        } else {
+            BoxedUint::from_le_slice_truncated(bytes, 128)
+        };
+        assert_eq!((value(&decoded), decoded.bits_precision()), (expected, 128));
+        let checked = if BE {
+            BoxedUint::from_be_slice(bytes, 128)
+        } else {
+            BoxedUint::from_le_slice(bytes, 128)
+        };
+        if len <= 16 {
+            let checked = checked.unwrap();
+            assert_eq!(checked.bits_precision(), 128);
+            assert_eq!(checked, decoded);
+        } else {
+            assert_eq!(checked, Err(DecodeError::InputSize));
+        }
+    }
+
+    /// Full and minimal byte encodings agree with native `u128`, including the empty zero form.
+    #[kani::proof]
+    #[kani::unwind(17)]
+    fn boxed_to_bytes_128_correct() {
+        let input = any_boxed::<{ 2 * L64 }>();
+        let native = value(&input);
+        let (be, le) = (native.to_be_bytes(), native.to_le_bytes());
+        let zeroes = native.leading_zeros() as usize / 8;
+        assert_eq!(input.to_be_bytes().as_ref(), &be);
+        assert_eq!(input.to_le_bytes().as_ref(), &le);
+        assert_eq!(input.to_be_bytes_trimmed_vartime().as_ref(), &be[zeroes..]);
+        assert_eq!(
+            input.to_le_bytes_trimmed_vartime().as_ref(),
+            &le[..16 - zeroes]
+        );
+    }
+
+    /// Partial-byte precision masks the native value and rounds storage to one limb.
+    fn check_boxed_partial_precision<const BITS: u32>() {
+        let n: crate::Word = kani::any();
+        let expected = n & (crate::Word::MAX >> (crate::Word::BITS - BITS));
+        let be = BoxedUint::from_be_slice_truncated(&n.to_be_bytes(), BITS);
+        let le = BoxedUint::from_le_slice_truncated(&n.to_le_bytes(), BITS);
+        for decoded in [&be, &le] {
+            assert_eq!(decoded.nlimbs(), 1);
+            assert_eq!(decoded.bits_precision(), crate::Word::BITS);
+            assert_eq!(decoded.as_words()[0], expected);
+        }
+    }
+
+    #[kani::proof]
+    #[kani::unwind(10)]
+    fn boxed_decode_one_bit_correct() {
+        check_boxed_partial_precision::<1>();
+    }
+
+    #[kani::proof]
+    #[kani::unwind(10)]
+    fn boxed_decode_partial_word_correct() {
+        check_boxed_partial_precision::<{ crate::Word::BITS - 1 }>();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{BoxedUint, DecodeError};

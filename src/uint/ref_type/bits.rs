@@ -274,6 +274,76 @@ impl BitOps for UintRef {
     }
 }
 
+#[cfg(kani)]
+mod kani_proofs {
+    use super::UintRef;
+    use crate::uint::ref_type::kani_util::{check, mask, value};
+    use crate::{BitOps, Choice, Limb, WideWord, Word};
+
+    /// Arbitrary prefixes of two full words, including empty storage and out-of-range indices.
+    #[kani::proof]
+    #[kani::unwind(4)]
+    fn uint_ref_bit_queries_mixed_lengths() {
+        let original = kani::any::<[Word; 2]>().map(Limb);
+        let (len, index): (usize, u32) = kani::any();
+        kani::assume(len <= 2);
+        let x = UintRef::new(&original[..len]);
+        let n = value(&original[..len]);
+        let bits = len as u32 * Word::BITS;
+        let bit_length = WideWord::BITS - n.leading_zeros();
+        let trailing_zeroes = n.trailing_zeros().min(bits);
+        let trailing_ones = n.trailing_ones().min(bits);
+        let bit = index < bits && (n >> index) & 1 != 0;
+        assert_eq!(x.bits_precision(), bits);
+        assert_eq!(x.bits(), bit_length);
+        assert_eq!(x.leading_zeros(), bits - bit_length);
+        assert_eq!(x.trailing_zeros(), trailing_zeroes);
+        assert_eq!(x.trailing_zeros_vartime(), trailing_zeroes);
+        assert_eq!(x.trailing_ones(), trailing_ones);
+        assert_eq!(x.trailing_ones_vartime(), trailing_ones);
+        assert_eq!(x.bit(index).to_bool(), bit);
+        assert_eq!(x.bit_vartime(index), bit);
+        assert_eq!(BitOps::bytes_precision(x), len * Limb::BYTES);
+        assert_eq!(BitOps::bits(x), bit_length);
+        // bits_vartime panics on an empty view; see its regression.
+        if len > 0 {
+            assert_eq!(x.bits_vartime(), bit_length);
+            assert_eq!(BitOps::bits_vartime(x), bit_length);
+        }
+    }
+
+    #[kani::proof]
+    #[kani::unwind(4)]
+    fn uint_ref_bit_updates_mixed_lengths() {
+        let original = kani::any::<[Word; 2]>().map(Limb);
+        let (len, index, enabled): (usize, u32, bool) = kani::any();
+        kani::assume(len <= 2);
+        let bits = len as u32 * Word::BITS;
+        let n = value(&original[..len]);
+        let expected = if index < bits {
+            if enabled {
+                n | (1 << index)
+            } else {
+                n & !(1 << index)
+            }
+        } else {
+            n
+        };
+        let mut out = original;
+        UintRef::new_mut(&mut out[..len]).set_bit(index, Choice::from(u8::from(enabled)));
+        check(&out, &original, len, expected);
+        if index < bits {
+            let mut out = original;
+            UintRef::new_mut(&mut out[..len]).set_bit_vartime(index, enabled);
+            check(&out, &original, len, expected);
+        }
+        let mut out = original;
+        UintRef::new_mut(&mut out[..len]).restrict_bits(index);
+        let expected = if index >= bits { n } else { n & mask(index) };
+        check(&out, &original, len, expected);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::UintRef;

@@ -187,3 +187,45 @@ mod tests {
         assert!(!bool::from(result.is_some()));
     }
 }
+
+#[cfg(kani)]
+mod kani_proofs {
+    use crate::{CheckedSub, Limb, NonZero, SubMod, WideWord, Word};
+
+    /// The incoming borrow uses its MSB; the outgoing borrow is a full-word mask.
+    #[kani::proof]
+    fn limb_borrowing_sub_correct() {
+        let (a, b, borrow): (Word, Word, Word) = kani::any();
+        let subtrahend = WideWord::from(b) + WideWord::from(borrow >> (Word::BITS - 1));
+        let (difference, borrow_out) = Limb(a).borrowing_sub(Limb(b), Limb(borrow));
+        assert_eq!(
+            difference.0,
+            WideWord::from(a).wrapping_sub(subtrahend) as Word
+        );
+        assert_eq!(
+            borrow_out.0,
+            Word::from(WideWord::from(a) < subtrahend).wrapping_neg()
+        );
+        assert_eq!(Limb(a).wrapping_sub(Limb(b)).0, a.wrapping_sub(b));
+        assert_eq!(Limb(a).saturating_sub(Limb(b)).0, a.saturating_sub(b));
+        assert_eq!(
+            Option::<Limb>::from(Limb(a).checked_sub(&Limb(b))).map(|v| v.0),
+            a.checked_sub(b)
+        );
+    }
+
+    /// For reduced inputs `a, b < p`, the result is `(a - b) mod p`.
+    #[kani::proof]
+    fn sub_mod_correct() {
+        let (a, b, p): (Word, Word, Word) = kani::any();
+        kani::assume(a < p && b < p);
+        let res = Limb(a).sub_mod(&Limb(b), &NonZero::new(Limb(p)).unwrap());
+
+        let expected = if a >= b {
+            (a - b) as WideWord
+        } else {
+            a as WideWord + p as WideWord - b as WideWord
+        };
+        assert_eq!(res.0 as WideWord, expected);
+    }
+}
