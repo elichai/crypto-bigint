@@ -147,3 +147,56 @@ mod tests {
         assert!(random_positive.is_positive().to_bool());
     }
 }
+
+#[cfg(kani)]
+mod kani_proofs {
+    use crate::{Choice, I128, U128};
+
+    #[kani::proof]
+    fn int_sign_correct() {
+        let x: i128 = kani::any();
+        let ix = I128::from_i128(x);
+        assert_eq!(ix.is_negative().to_bool(), x < 0);
+        assert_eq!(ix.is_positive().to_bool(), x > 0);
+        let (abs, sign) = ix.abs_sign();
+        assert_eq!(u128::from(abs), x.unsigned_abs());
+        assert_eq!(sign.to_bool(), x < 0);
+        assert_eq!(u128::from(ix.abs()), x.unsigned_abs());
+    }
+
+    /// `Some` exactly when the signed value is representable, including `(2^127, negative)`.
+    #[kani::proof]
+    fn int_new_from_abs_sign_correct() {
+        let (abs, negative): (u128, bool) = kani::any();
+        let choice = if negative {
+            Choice::TRUE
+        } else {
+            Choice::FALSE
+        };
+        let res = I128::new_from_abs_sign(U128::from_u128(abs), choice);
+
+        let expected = if negative {
+            (abs <= 1 << 127).then(|| abs.wrapping_neg() as i128)
+        } else {
+            i128::try_from(abs).ok()
+        };
+        assert_eq!(Option::<I128>::from(res).map(i128::from), expected);
+    }
+
+    #[kani::proof]
+    #[kani::unwind(5)]
+    fn int_new_from_abs_option_sign_native() {
+        let (abs, negative, valid): (u128, bool, bool) = kani::any();
+        let magnitude =
+            crate::CtOption::new(U128::from_u128(abs), Choice::from_u8_lsb(valid as u8));
+        let result = I128::new_from_abs_opt_sign(magnitude, Choice::from_u8_lsb(negative as u8));
+        let expected = if !valid {
+            None
+        } else if negative {
+            (abs <= 1 << 127).then(|| abs.wrapping_neg() as i128)
+        } else {
+            i128::try_from(abs).ok()
+        };
+        assert_eq!(Option::<I128>::from(result).map(i128::from), expected);
+    }
+}

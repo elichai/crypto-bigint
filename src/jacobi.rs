@@ -92,6 +92,28 @@ impl subtle::ConstantTimeEq for JacobiSymbol {
     }
 }
 
+#[cfg(kani)]
+mod kani_proofs {
+    use crate::{CtEq, JacobiSymbol};
+
+    #[kani::proof]
+    fn jacobi_symbol_native() {
+        let (a, b): (i8, i8) = kani::any();
+        kani::assume((-1..=1).contains(&a));
+        kani::assume((-1..=1).contains(&b));
+        let lhs = JacobiSymbol::from_i8(a);
+        let rhs = JacobiSymbol::from_i8(b);
+        assert_eq!(i8::from(lhs), a);
+        assert_eq!(lhs.is_zero().to_bool(), a == 0);
+        assert_eq!(lhs.is_one().to_bool(), a == 1);
+        assert_eq!(lhs.is_minus_one().to_bool(), a == -1);
+        assert_eq!(lhs.ct_eq(&rhs).to_bool(), a == b);
+        assert_eq!(lhs == rhs, a == b);
+        assert_eq!(i8::from(lhs.neg()), -a);
+        assert_eq!(i8::from(-lhs), -a);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::JacobiSymbol;

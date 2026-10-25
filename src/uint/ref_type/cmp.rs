@@ -213,3 +213,83 @@ mod tests {
         check(smaller, bigger);
     }
 }
+
+#[cfg(kani)]
+mod kani_proofs {
+    use super::UintRef;
+    use crate::uint::ref_type::kani_util::value;
+    use crate::{CtEq, Limb, U64, U128, Word};
+
+    /// Independent active lengths include empty views and redundant high zero words.
+    #[kani::proof]
+    #[kani::unwind(6)]
+    fn uint_ref_ordering_mixed_lengths() {
+        let (a, b): ([Word; 2], [Word; 2]) = kani::any();
+        let (a_len, b_len): (usize, usize) = kani::any();
+        kani::assume(a_len <= 2 && b_len <= 2);
+        let (a, b) = (a.map(Limb), b.map(Limb));
+        let (a, b) = (UintRef::new(&a[..a_len]), UintRef::new(&b[..b_len]));
+        let (va, vb) = (value(a.as_limbs()), value(b.as_limbs()));
+        let expected = va.cmp(&vb);
+        assert_eq!(UintRef::cmp(a, b), expected);
+        assert_eq!(UintRef::cmp(b, a), expected.reverse());
+        assert_eq!(a.cmp_vartime(b), expected);
+        assert_eq!(b.cmp_vartime(a), expected.reverse());
+        assert_eq!(Ord::cmp(a, b), expected);
+        assert_eq!(a.partial_cmp(b), Some(expected));
+        assert_eq!(a == b, va == vb);
+        assert_eq!(a < b, va < vb);
+        assert_eq!(a > b, va > vb);
+    }
+
+    #[kani::proof]
+    #[kani::unwind(6)]
+    fn uint_ref_predicates_and_borrowed_wrappers() {
+        let words: [Word; 2] = kani::any();
+        let len: usize = kani::any();
+        kani::assume(len <= 2);
+        let limbs = words.map(Limb);
+        let input = UintRef::new(&limbs[..len]);
+        let n = value(input.as_limbs());
+        assert_eq!(input.is_zero().to_bool(), n == 0);
+        assert_eq!(input.is_zero_vartime(), n == 0);
+        assert_eq!(input.is_nonzero().to_bool(), n != 0);
+        let nonzero = input.as_nz_vartime();
+        assert_eq!(nonzero.is_some(), n != 0);
+        if let Some(nonzero) = nonzero {
+            assert_eq!(value(nonzero.as_ref().as_limbs()), n);
+            assert_eq!(nonzero.as_ref().nlimbs(), len);
+        }
+        // Oddness and lowest_u64 access the first limb, so require a nonempty view.
+        if len > 0 {
+            assert_eq!(input.is_odd().to_bool(), n & 1 == 1);
+            assert_eq!(input.lowest_u64(), n as u64);
+            let odd = input.as_odd_vartime();
+            assert_eq!(odd.is_some(), n & 1 == 1);
+            if let Some(odd) = odd {
+                assert_eq!(value(odd.as_ref().as_limbs()), n);
+                assert_eq!(odd.as_ref().nlimbs(), len);
+            }
+        }
+    }
+
+    /// Comparisons between a 128-bit and a 64-bit `UintRef` agree with `u128`, in both orders.
+    #[kani::proof]
+    #[kani::unwind(5)]
+    fn uintref_cmp_mixed_width_correct() {
+        let (a, b): (u128, u64) = kani::any();
+        let (ua, ub) = (U128::from_u128(a), U64::from_u64(b));
+        let (ra, rb) = (ua.as_uint_ref(), ub.as_uint_ref());
+        let b = u128::from(b);
+
+        assert_eq!(UintRef::cmp(ra, rb), a.cmp(&b));
+        assert_eq!(UintRef::cmp(rb, ra), b.cmp(&a));
+        assert_eq!(ra.cmp_vartime(rb), a.cmp(&b));
+        assert_eq!(rb.cmp_vartime(ra), b.cmp(&a));
+        assert_eq!(UintRef::lt(ra, rb).to_bool(), a < b);
+        assert_eq!(UintRef::lt(rb, ra).to_bool(), b < a);
+        assert_eq!(ra.ct_eq(rb).to_bool(), a == b);
+        assert_eq!(rb.ct_eq(ra).to_bool(), a == b);
+        assert_eq!(ua.ct_eq(&ub).to_bool(), a == b);
+    }
+}

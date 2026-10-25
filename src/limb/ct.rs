@@ -161,3 +161,31 @@ mod tests {
         assert!(!c.ct_lt(&b).to_bool());
     }
 }
+
+#[cfg(kani)]
+mod kani_proofs {
+    use crate::{Choice, CtAssign, CtEq, CtGt, CtLt, CtSelect, Limb, Word};
+
+    #[kani::proof]
+    fn limb_ct_ops_correct() {
+        let (a, b, flag): (Word, Word, bool) = kani::any();
+        let choice = if flag { Choice::TRUE } else { Choice::FALSE };
+
+        assert_eq!(Limb(a).ct_eq(&Limb(b)).to_bool(), a == b);
+        assert_eq!(Limb(a).ct_ne(&Limb(b)).to_bool(), a != b);
+        assert_eq!(Limb(a).ct_lt(&Limb(b)).to_bool(), a < b);
+        assert_eq!(Limb(a).ct_gt(&Limb(b)).to_bool(), a > b);
+
+        let chosen = if flag { b } else { a };
+        assert_eq!(Limb::select(Limb(a), Limb(b), choice).0, chosen);
+        assert_eq!(Limb(a).ct_select(&Limb(b), choice).0, chosen);
+
+        let mut x = Limb(a);
+        x.ct_assign(&Limb(b), choice);
+        assert_eq!(x.0, chosen);
+
+        let (mut x, mut y) = (Limb(a), Limb(b));
+        Limb::ct_conditional_swap(&mut x, &mut y, choice);
+        assert_eq!((x.0, y.0), if flag { (b, a) } else { (a, b) });
+    }
+}

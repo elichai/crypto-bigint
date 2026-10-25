@@ -598,3 +598,32 @@ mod tests {
         assert_eq!(value.bits_precision(), 128);
     }
 }
+
+#[cfg(kani)]
+mod kani_proofs {
+    use super::Odd;
+    use crate::{I128, Limb, U128, Word};
+
+    /// `Odd::new` is `Some` exactly for odd inputs and then wraps the input unchanged. Even when
+    /// it is `None`, the wrapped placeholder is odd.
+    #[kani::proof]
+    #[kani::unwind(5)]
+    fn odd_new_correct() {
+        let (w, u, i): (Word, u128, i128) = kani::any();
+
+        let odd = Odd::new(Limb(w));
+        assert_eq!(odd.is_some().to_bool(), w & 1 == 1);
+        let inner = odd.to_inner_unchecked().get();
+        assert!(inner.0 & 1 == 1 && (w & 1 == 0 || inner.0 == w));
+
+        let odd = Odd::new(U128::from_u128(u));
+        assert_eq!(odd.is_some().to_bool(), u & 1 == 1);
+        let inner = u128::from(odd.to_inner_unchecked().get());
+        assert!(inner & 1 == 1 && (u & 1 == 0 || inner == u));
+
+        let odd = Odd::new(I128::from_i128(i));
+        assert_eq!(odd.is_some().to_bool(), i & 1 == 1);
+        let inner = i128::from(odd.to_inner_unchecked().get());
+        assert!(inner & 1 == 1 && (i & 1 == 0 || inner == i));
+    }
+}

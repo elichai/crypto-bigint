@@ -232,3 +232,68 @@ mod tests {
         assert_eq!(result, max_minus_one);
     }
 }
+
+#[cfg(kani)]
+mod kani_proofs {
+    use crate::{Checked, CheckedSub, I128, Wrapping};
+
+    #[kani::proof]
+    fn int_sub_correct() {
+        let (a, b): (i128, i128) = kani::any();
+        let (ia, ib) = (I128::from_i128(a), I128::from_i128(b));
+
+        let (diff, underflow) = ia.underflowing_sub(&ib);
+        assert_eq!(
+            (i128::from(diff), underflow.to_bool()),
+            a.overflowing_sub(b)
+        );
+        assert_eq!(i128::from(ia.wrapping_sub(&ib)), a.wrapping_sub(b));
+        assert_eq!(
+            Option::<I128>::from(ia.checked_sub(&ib)).map(i128::from),
+            a.checked_sub(b)
+        );
+    }
+
+    #[kani::proof]
+    #[kani::unwind(5)]
+    fn int_sub_wrappers_native() {
+        let (a, b): (i128, i128) = kani::any();
+        let (ia, ib) = (I128::from_i128(a), I128::from_i128(b));
+        let mut wrapped = Wrapping(ia);
+        wrapped -= Wrapping(ib);
+        assert_eq!(i128::from(wrapped.0), a.wrapping_sub(b));
+        wrapped = Wrapping(ia);
+        wrapped -= &Wrapping(ib);
+        assert_eq!(i128::from(wrapped.0), a.wrapping_sub(b));
+        let mut checked = Checked::new(ia);
+        checked -= Checked::new(ib);
+        assert_eq!(
+            Option::<I128>::from(checked).map(i128::from),
+            a.checked_sub(b)
+        );
+        checked = Checked::new(ia);
+        checked -= &Checked::new(ib);
+        assert_eq!(
+            Option::<I128>::from(checked).map(i128::from),
+            a.checked_sub(b)
+        );
+    }
+
+    #[kani::proof]
+    #[kani::unwind(5)]
+    fn int_sub_operators_native() {
+        let (a, b): (i128, i128) = kani::any();
+        let Some(expected) = a.checked_sub(b) else {
+            return;
+        };
+        let (ia, ib) = (I128::from_i128(a), I128::from_i128(b));
+        assert_eq!(i128::from(ia - ib), expected);
+        assert_eq!(i128::from(ia - &ib), expected);
+        let mut assigned = ia;
+        assigned -= ib;
+        assert_eq!(i128::from(assigned), expected);
+        assigned = ia;
+        assigned -= &ib;
+        assert_eq!(i128::from(assigned), expected);
+    }
+}

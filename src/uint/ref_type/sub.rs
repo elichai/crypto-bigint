@@ -83,6 +83,90 @@ impl UintRef {
     }
 }
 
+#[cfg(kani)]
+mod kani_proofs {
+    use crate::{Choice, Limb, UintRef, WideWord, Word};
+
+    /// Incoming borrow uses its MSB; empty slices preserve the original borrow word.
+    #[kani::proof]
+    #[kani::unwind(6)]
+    fn uint_ref_borrowing_sub_mixed_lengths() {
+        let original: [Word; 4] = kani::any();
+        let rhs: [Word; 4] = kani::any();
+        let (len, rhs_len): (usize, usize) = kani::any();
+        kani::assume(rhs_len <= len && len <= 4);
+        let incoming: Word = kani::any();
+        let enabled: bool = kani::any();
+        let mut plain = original.map(Limb);
+        let mut conditional = plain;
+        let rhs_limbs = rhs.map(Limb);
+        let borrow = UintRef::new_mut(&mut plain[..len])
+            .borrowing_sub_assign_slice(&rhs_limbs[..rhs_len], Limb(incoming));
+        let conditional_borrow = UintRef::new_mut(&mut conditional[..len])
+            .conditional_borrowing_sub_assign(
+                UintRef::new(&rhs_limbs[..rhs_len]),
+                Choice::from_u8_lsb(enabled as u8),
+            );
+        let mut expected_borrow = incoming;
+        let mut expected_conditional_borrow = 0;
+        for i in 0..4 {
+            if i < len {
+                let rhs_word = if i < rhs_len { rhs[i] } else { 0 };
+                let subtrahend =
+                    rhs_word as WideWord + (expected_borrow >> (Word::BITS - 1)) as WideWord;
+                let conditional_subtrahend = if enabled { rhs_word as WideWord } else { 0 }
+                    + (expected_conditional_borrow >> (Word::BITS - 1)) as WideWord;
+                assert_eq!(
+                    plain[i].0,
+                    (original[i] as WideWord).wrapping_sub(subtrahend) as Word
+                );
+                assert_eq!(
+                    conditional[i].0,
+                    (original[i] as WideWord).wrapping_sub(conditional_subtrahend) as Word
+                );
+                expected_borrow = Word::from((original[i] as WideWord) < subtrahend).wrapping_neg();
+                expected_conditional_borrow =
+                    Word::from((original[i] as WideWord) < conditional_subtrahend).wrapping_neg();
+            } else {
+                assert_eq!(plain[i].0, original[i]);
+                assert_eq!(conditional[i].0, original[i]);
+            }
+        }
+        assert_eq!(borrow.0, expected_borrow);
+        assert_eq!(
+            conditional_borrow.to_bool(),
+            expected_conditional_borrow != 0
+        );
+    }
+
+    #[kani::proof]
+    #[kani::unwind(6)]
+    fn uint_ref_borrowing_sub_limb_mixed_lengths() {
+        let original: [Word; 4] = kani::any();
+        let (rhs, incoming): (Word, Word) = kani::any();
+        let len: usize = kani::any();
+        kani::assume(len <= 4);
+        let mut limbs = original.map(Limb);
+        let borrow = UintRef::new_mut(&mut limbs[..len])
+            .borrowing_sub_assign_limb(Limb(rhs), Limb(incoming));
+        let mut expected_borrow = incoming;
+        for i in 0..4 {
+            if i < len {
+                let subtrahend = if i == 0 { rhs as WideWord } else { 0 }
+                    + (expected_borrow >> (Word::BITS - 1)) as WideWord;
+                assert_eq!(
+                    limbs[i].0,
+                    (original[i] as WideWord).wrapping_sub(subtrahend) as Word
+                );
+                expected_borrow = Word::from((original[i] as WideWord) < subtrahend).wrapping_neg();
+            } else {
+                assert_eq!(limbs[i].0, original[i]);
+            }
+        }
+        assert_eq!(borrow.0, expected_borrow);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::{Choice, Limb, UintRef, Unsigned};

@@ -210,6 +210,75 @@ impl ShrVartime for BoxedUint {
     }
 }
 
+#[cfg(kani)]
+mod kani_proofs {
+    use crate::uint::boxed::kani_util::{L64, any_boxed, value};
+
+    #[kani::proof]
+    #[kani::unwind(9)]
+    fn boxed_unbounded_shr_correct() {
+        let a = any_boxed::<{ 2 * L64 }>();
+        let n = value(&a);
+        let shift: u32 = kani::any();
+        let expected = if shift >= 128 { 0 } else { n >> shift };
+        let ct = a.unbounded_shr(shift);
+        let vt = a.unbounded_shr_vartime(shift);
+        assert_eq!((value(&ct), ct.bits_precision()), (expected, 128));
+        assert_eq!((value(&vt), vt.bits_precision()), (expected, 128));
+        let mut assigned = a;
+        assigned.unbounded_shr_assign_vartime(shift);
+        assert_eq!(value(&assigned), expected);
+    }
+
+    #[kani::proof]
+    #[kani::unwind(9)]
+    fn boxed_overflowing_shr_correct() {
+        let a = any_boxed::<{ 2 * L64 }>();
+        let n = value(&a);
+        let shift: u32 = kani::any();
+        let expected = if shift >= 128 { None } else { Some(n >> shift) };
+        assert_eq!(
+            a.overflowing_shr(shift).into_option().map(|r| value(&r)),
+            expected
+        );
+        assert_eq!(
+            a.overflowing_shr_vartime(shift).map(|r| value(&r)),
+            expected
+        );
+        let mut assigned = a;
+        assert_eq!(assigned.overflowing_shr_assign_vartime(shift), shift >= 128);
+        assert_eq!(value(&assigned), expected.unwrap_or(n));
+    }
+
+    #[kani::proof]
+    #[kani::unwind(9)]
+    fn boxed_wrapping_shr_and_shr1_correct() {
+        let mut a = any_boxed::<{ 2 * L64 }>();
+        let n = value(&a);
+        let shift: u32 = kani::any();
+        let expected = n.wrapping_shr(shift);
+        assert_eq!(value(&a.wrapping_shr(shift)), expected);
+        assert_eq!(value(&a.wrapping_shr_vartime(shift)), expected);
+        // The returned carry is specified by regression_boxed_shr1_carry below.
+        a.shr1_assign();
+        assert_eq!(value(&a), n >> 1);
+    }
+}
+
+#[cfg(all(test, kani))]
+mod kani_regressions {
+    use crate::uint::boxed::kani_util::{L64, any_boxed, value};
+
+    #[kani::proof]
+    #[kani::unwind(5)]
+    fn regression_boxed_shr1_carry() {
+        let mut a = any_boxed::<{ 2 * L64 }>();
+        let n = value(&a);
+        assert_eq!(a.shr1_assign().to_bool(), n & 1 != 0);
+        assert_eq!(value(&a), n >> 1);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::BoxedUint;

@@ -155,6 +155,62 @@ impl FloorSquareRoot for NonZero<BoxedUint> {
     }
 }
 
+#[cfg(kani)]
+mod kani_proofs {
+    use crate::uint::boxed::kani_util::value;
+    use crate::{BoxedUint, CheckedSquareRoot, FloorSquareRoot, Word};
+
+    fn assert_root(root: &BoxedUint, expected: u16) {
+        assert_eq!(value(root), u128::from(expected));
+        assert_eq!(root.bits_precision(), Word::BITS);
+    }
+
+    /// Every u16 value at one-limb precision; the oracle is native integer square root.
+    #[kani::proof]
+    #[kani::unwind(34)]
+    #[allow(deprecated)]
+    fn boxed_floor_sqrt_u16_correct() {
+        let n: u16 = kani::any();
+        let input = BoxedUint::from(n);
+        let expected = n.isqrt();
+        assert_root(&FloorSquareRoot::floor_sqrt(&input), expected);
+        assert_root(&input.wrapping_sqrt(), expected);
+        assert_root(&input.sqrt(), expected);
+    }
+
+    /// Checked roots exist exactly for perfect squares throughout the u16 domain.
+    #[kani::proof]
+    #[kani::unwind(34)]
+    fn boxed_checked_sqrt_u16_correct() {
+        let n: u16 = kani::any();
+        let input = BoxedUint::from(n);
+        let expected = n.isqrt();
+        let exact = expected * expected == n;
+        let checked = CheckedSquareRoot::checked_sqrt(&input).into_option();
+        assert_eq!(checked.is_some(), exact);
+        if let Some(root) = checked {
+            assert_root(&root, expected);
+        }
+    }
+
+    /// Nonzero u16 inputs preserve the native root, exactness, and one-limb precision.
+    #[kani::proof]
+    #[kani::unwind(34)]
+    fn boxed_nonzero_sqrt_u16_correct() {
+        let n: u16 = kani::any();
+        kani::assume(n != 0);
+        let input = BoxedUint::from(n).to_nz().unwrap();
+        let expected = n.isqrt();
+        let exact = expected * expected == n;
+        assert_root(FloorSquareRoot::floor_sqrt(&input).as_ref(), expected);
+        let checked = CheckedSquareRoot::checked_sqrt(&input).into_option();
+        assert_eq!(checked.is_some(), exact);
+        if let Some(root) = checked {
+            assert_root(root.as_ref(), expected);
+        }
+    }
+}
+
 #[cfg(test)]
 #[allow(clippy::integer_division_remainder_used, reason = "test")]
 mod tests {

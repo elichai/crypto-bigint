@@ -205,3 +205,51 @@ mod tests {
         assert_eq!(i128::from(n), -42i128);
     }
 }
+
+#[cfg(kani)]
+mod kani_proofs {
+    use crate::{I64, I128};
+
+    /// The native conversions are bijections, and widening sign-extends. Later `Int` harnesses use
+    /// them as the reference model.
+    #[kani::proof]
+    fn int_native_conversions_roundtrip() {
+        let x: i128 = kani::any();
+        assert_eq!(i128::from(I128::from_i128(x)), x);
+        let y = I128::from_words(kani::any());
+        assert_eq!(I128::from_i128(i128::from(y)), y);
+
+        let x: i64 = kani::any();
+        assert_eq!(i64::from(I64::from_i64(x)), x);
+        assert_eq!(i128::from(I128::from_i64(x)), i128::from(x));
+        assert_eq!(i128::from(I128::from(&I64::from_i64(x))), i128::from(x));
+    }
+
+    #[kani::proof]
+    #[kani::unwind(5)]
+    fn int_small_native_conversions() {
+        let (a, b, c): (i8, i16, i32) = kani::any();
+        assert_eq!(i128::from(I128::from_i8(a)), a as i128);
+        assert_eq!(i128::from(I128::from_i16(b)), b as i128);
+        assert_eq!(i128::from(I128::from_i32(c)), c as i128);
+        assert_eq!(i128::from(I128::from(a)), a as i128);
+        assert_eq!(i128::from(I128::from(b)), b as i128);
+        assert_eq!(i128::from(I128::from(c)), c as i128);
+        let x: i128 = kani::any();
+        assert_eq!(i64::from(I64::from_i128(x)), x as i64);
+    }
+
+    #[kani::proof]
+    #[kani::unwind(5)]
+    fn int_from_uint_option_preserves_validity() {
+        let (x, valid): (u128, bool) = kani::any();
+        let option = crate::CtOption::new(
+            crate::U128::from_u128(x),
+            crate::Choice::from_u8_lsb(valid as u8),
+        );
+        assert_eq!(
+            Option::<I128>::from(I128::from_uint_opt(option)).map(i128::from),
+            if valid { Some(x as i128) } else { None }
+        );
+    }
+}

@@ -342,3 +342,80 @@ mod tests {
         }
     }
 }
+
+#[cfg(kani)]
+mod kani_proofs {
+    use super::bingcd_step;
+    use crate::{Odd, U128, Uint, Word};
+
+    /// For odd `b`, one constant-time step computes the documented update (if `a` is odd, swap
+    /// so that `a >= b` and subtract; then halve `a`), keeps `b` odd, and halves exactly.
+    #[kani::proof]
+    #[kani::unwind(5)]
+    fn bingcd_step_correct() {
+        let (a, b): (u128, u128) = kani::any();
+        kani::assume(b & 1 == 1);
+        let (mut ua, mut ub) = (U128::from_u128(a), U128::from_u128(b));
+        let (a_odd, swap, jacobi_neg) = bingcd_step(&mut ua, &mut ub);
+
+        let is_odd = a & 1 == 1;
+        let swapped = is_odd && a < b;
+        let (hi, lo) = if swapped { (b, a) } else { (a, b) };
+        let diff = if is_odd { hi - lo } else { hi };
+        assert_eq!(diff & 1, 0);
+        assert_eq!(
+            (u128::from(ua), u128::from(ub)),
+            (diff >> 1, if swapped { a } else { b })
+        );
+        assert_eq!((a_odd.to_bool(), swap.to_bool()), (is_odd, swapped));
+        assert_eq!(u128::from(ub) & 1, 1);
+
+        // Jacobi sign flips: reciprocity when swapping two values that are both 3 mod 4, and
+        // `(2|b) = -1` for the new `b` = ±3 mod 8.
+        let reciprocity = swapped && a & 3 == 3 && b & 3 == 3;
+        let new_b = u128::from(ub) & 7;
+        let two = new_b == 3 || new_b == 5;
+        assert_eq!(jacobi_neg, Word::from(reciprocity ^ two));
+    }
+
+    /// Every active step decreases `bits(a) + bits(b)`. At `a = 0`, the pair is stable.
+    /// This is the local termination measure behind the fixed `2 * BITS - 1` step bound.
+    #[kani::proof]
+    #[kani::unwind(5)]
+    fn bingcd_step_decreases_bitlength() {
+        let (a, b): (u128, u128) = kani::any();
+        kani::assume(b & 1 == 1);
+        let (mut ua, mut ub) = (U128::from_u128(a), U128::from_u128(b));
+        bingcd_step(&mut ua, &mut ub);
+        let (next_a, next_b) = (u128::from(ua), u128::from(ub));
+        assert_eq!(next_b & 1, 1);
+        if a == 0 {
+            assert_eq!((next_a, next_b), (0, b));
+        } else {
+            let before = (128 - a.leading_zeros()) + (128 - b.leading_zeros());
+            let after = (128 - next_a.leading_zeros()) + (128 - next_b.leading_zeros());
+            assert!(after < before);
+        }
+    }
+
+    /// For one-limb inputs, the constant-time classic binary GCD (a fixed `2·BITS - 1` steps)
+    /// returns the same gcd as the vartime one (which stops when `a == 0`), so the fixed step
+    /// count is always enough. The Jacobi signs agree whenever the gcd is 1. Otherwise they can
+    /// differ: each step after `a == 0` XORs in `(2|gcd)`. That is harmless because
+    /// `jacobi_symbol` returns 0 when the gcd is not 1.
+    #[kani::proof]
+    #[kani::unwind(130)]
+    fn classic_bingcd_ct_matches_vartime() {
+        let (m, y): (Word, Word) = kani::any();
+        kani::assume(m & 1 == 1);
+        let m = Odd::new(Uint::<1>::from_word(m)).unwrap();
+        let y = Uint::<1>::from_word(y);
+
+        let (gcd, jacobi_neg) = m.classic_bingcd_(&y);
+        let (gcd_vartime, jacobi_neg_vartime) = m.classic_bingcd_vartime_(&y);
+        assert_eq!(gcd.get(), gcd_vartime.get());
+        if gcd.get() == Uint::ONE {
+            assert_eq!(jacobi_neg, jacobi_neg_vartime);
+        }
+    }
+}

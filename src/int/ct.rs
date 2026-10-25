@@ -80,6 +80,35 @@ impl<const LIMBS: usize> subtle::ConstantTimeLess for Int<LIMBS> {
     }
 }
 
+#[cfg(kani)]
+mod kani_proofs {
+    use crate::{Choice, CtAssign, CtEq, CtGt, CtLt, CtSelect, I128};
+
+    #[kani::proof]
+    #[kani::unwind(5)]
+    fn int_ct_select_assign_native() {
+        let (a, b, flag): (i128, i128, bool) = kani::any();
+        let (ia, ib) = (I128::from_i128(a), I128::from_i128(b));
+        let choice = Choice::from_u8_lsb(flag as u8);
+        let expected = if flag { b } else { a };
+        assert_eq!(i128::from(I128::select(&ia, &ib, choice)), expected);
+        assert_eq!(i128::from(ia.ct_select(&ib, choice)), expected);
+        let mut assigned = ia;
+        assigned.ct_assign(&ib, choice);
+        assert_eq!(i128::from(assigned), expected);
+    }
+
+    #[kani::proof]
+    #[kani::unwind(5)]
+    fn int_ct_comparisons_native() {
+        let (a, b): (i128, i128) = kani::any();
+        let (ia, ib) = (I128::from_i128(a), I128::from_i128(b));
+        assert_eq!(ia.ct_eq(&ib).to_bool(), a == b);
+        assert_eq!(ia.ct_lt(&ib).to_bool(), a < b);
+        assert_eq!(ia.ct_gt(&ib).to_bool(), a > b);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::{Choice, CtGt, CtLt, CtSelect, I128};

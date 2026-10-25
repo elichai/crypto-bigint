@@ -19,3 +19,14 @@ impl Not for Limb {
         self.not()
     }
 }
+
+#[cfg(kani)]
+mod kani_proofs {
+    use crate::{Limb, Word};
+
+    #[kani::proof]
+    fn limb_not_native() {
+        let a: Word = kani::any();
+        assert_eq!((!Limb(a)).0, !a);
+    }
+}

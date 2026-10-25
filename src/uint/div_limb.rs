@@ -365,3 +365,135 @@ mod tests {
         );
     }
 }
+
+#[cfg(kani)]
+mod kani_proofs {
+    use super::{div2by1, div3by2, short_div};
+    use crate::{Limb, NonZero, Reciprocal, U128, WideWord, Word};
+
+    /// Full two-word dividend domain satisfying div2by1's one-word quotient precondition.
+    #[kani::proof]
+    #[kani::solver(z3)] // The SAT backend times out on the full-word carry equivalence.
+    fn div2by1_max_divisor_correct() {
+        let (lo, hi): (Word, Word) = kani::any();
+        kani::assume(hi < Word::MAX);
+        let divisor = NonZero::new(Limb::MAX).unwrap();
+        let reciprocal = Reciprocal::new(divisor);
+        // Use B = 1 modulo B - 1 to avoid a second division circuit in the solver.
+        let sum = WideWord::from(lo) + WideWord::from(hi);
+        let correction = sum >= WideWord::from(Word::MAX);
+        let expected_q = hi + Word::from(correction);
+        let expected_r = if correction {
+            sum - WideWord::from(Word::MAX)
+        } else {
+            sum
+        };
+        let (q, r) = div2by1(lo, hi, &reciprocal);
+        assert_eq!(q, expected_q);
+        assert_eq!(WideWord::from(r), expected_r);
+    }
+
+    /// Every two-word dividend at d = B^2/2, covering quotient zero and the correction to one.
+    #[kani::proof]
+    #[kani::solver(z3)]
+    fn div3by2_two_word_high_bit_divisor_correct() {
+        let (lo, mid): (Word, Word) = kani::any();
+        let d1 = 1 << (Word::BITS - 1);
+        let reciprocal = Reciprocal::new(NonZero::new(Limb(d1)).unwrap());
+        let adjusted = reciprocal.reciprocal_3by2(0, d1);
+        assert_eq!(adjusted, Word::MAX);
+        let (q, r) = div3by2((lo, mid, 0), (0, d1), adjusted);
+        assert_eq!(q, mid >> (Word::BITS - 1));
+        assert_eq!(
+            r,
+            (WideWord::from(mid & (d1 - 1)) << Word::BITS) | WideWord::from(lo)
+        );
+    }
+
+    /// The deliberate u_hi == d clamp is outside the ordinary one-word quotient contract.
+    /// For leading divisor B - 1 and all low words, check the saturated remainder sentinel.
+    #[kani::proof]
+    fn div3by2_saturated_boundary_correct() {
+        let (lo, d0): (Word, Word) = kani::any();
+        let reciprocal = Reciprocal::new(NonZero::new(Limb::MAX).unwrap());
+        let adjusted = reciprocal.reciprocal_3by2(d0, Word::MAX);
+        // floor((B^3 - 1) / (B^2 - B + d0)) - B is 1 exactly when d0 is zero.
+        assert_eq!(adjusted, Word::from(d0 == 0));
+        let divisor = (WideWord::from(Word::MAX) << Word::BITS) | WideWord::from(d0);
+        let (q, r) = div3by2((lo, d0, Word::MAX), (d0, Word::MAX), adjusted);
+        assert_eq!(q, Word::MAX);
+        assert_eq!(
+            r,
+            divisor
+                .checked_add(WideWord::from(lo))
+                .unwrap_or(WideWord::MAX)
+        );
+    }
+
+    // Separate remainder-only circuits: Z3 proves them in 1–3s at 64 bits; combined checks hit 110s.
+    fn check_limb_power_of_two<const SHIFT: u32, const REM_ONLY: bool>(n: u128) {
+        let divisor = Limb(1 << SHIFT);
+        let expected = (n >> SHIFT, n & ((1u128 << SHIFT) - 1));
+        let n = U128::from_u128(n);
+        let divisor = NonZero::new(divisor).unwrap();
+        let reciprocal = Reciprocal::new(divisor);
+        if REM_ONLY {
+            assert_eq!(u128::from(n.rem_limb(divisor).0), expected.1);
+            assert_eq!(
+                u128::from(n.rem_limb_with_reciprocal(&reciprocal).0),
+                expected.1
+            );
+        } else {
+            let (q, r) = n.div_rem_limb(divisor);
+            assert_eq!((u128::from(q), u128::from(r.0)), expected);
+            let (q, r) = n.div_rem_limb_with_reciprocal(&reciprocal);
+            assert_eq!((u128::from(q), u128::from(r.0)), expected);
+        }
+    }
+
+    /// Full dividend domain with the largest normalization shift; remainder-only APIs below.
+    #[kani::proof]
+    #[kani::unwind(17)]
+    fn uint_div_rem_limb_one_u128_correct() {
+        check_limb_power_of_two::<0, false>(kani::any());
+    }
+
+    /// Full dividend domain with no normalization shift; remainder-only APIs below.
+    #[kani::proof]
+    #[kani::unwind(17)]
+    fn uint_div_rem_limb_high_bit_u128_correct() {
+        check_limb_power_of_two::<{ Limb::BITS - 1 }, false>(kani::any());
+    }
+
+    #[kani::proof]
+    #[kani::solver(z3)]
+    #[kani::unwind(17)]
+    fn uint_rem_limb_one_u128_correct() {
+        check_limb_power_of_two::<0, true>(kani::any());
+    }
+
+    #[kani::proof]
+    #[kani::solver(z3)]
+    #[kani::unwind(17)]
+    fn uint_rem_limb_high_bit_u128_correct() {
+        check_limb_power_of_two::<{ Limb::BITS - 1 }, true>(kani::any());
+    }
+
+    /// Full normalized 9-bit divisor domain used by the 64-bit reciprocal.
+    #[kani::proof]
+    #[kani::unwind(17)]
+    fn short_div_9bit_correct() {
+        let divisor = u32::from(kani::any::<u8>()) | (1 << 8);
+        let dividend = (1 << 19) - 3 * (1 << 8);
+        assert_eq!(short_div(dividend, 19, divisor, 9), dividend / divisor);
+    }
+
+    /// Full normalized 10-bit divisor domain used by the 32-bit reciprocal.
+    #[kani::proof]
+    #[kani::unwind(17)]
+    fn short_div_10bit_correct() {
+        let divisor = (u32::from(kani::any::<u16>()) & ((1 << 9) - 1)) | (1 << 9);
+        let dividend = (1 << 24) - (1 << 14) + (1 << 9);
+        assert_eq!(short_div(dividend, 24, divisor, 10), dividend / divisor);
+    }
+}

@@ -312,6 +312,126 @@ impl UintRef {
     }
 }
 
+#[cfg(kani)]
+mod kani_proofs {
+    use super::UintRef;
+    use crate::uint::ref_type::kani_util::{check, value};
+    use crate::{Choice, Limb, WideWord, Word};
+
+    #[kani::proof]
+    #[kani::unwind(9)]
+    fn uint_ref_shr_mixed_lengths() {
+        let original = kani::any::<[Word; 2]>().map(Limb);
+        let (len, shift): (usize, u32) = kani::any();
+        kani::assume(1 <= len && len <= 2);
+        let bits = len as u32 * Word::BITS;
+        let n = value(&original[..len]);
+        let shifted = n.checked_shr(shift).unwrap_or(0);
+        let mut out = original;
+        let overflow = UintRef::new_mut(&mut out[..len]).overflowing_shr_assign(shift);
+        assert_eq!(overflow.to_bool(), shift >= bits);
+        check(
+            &out,
+            &original,
+            len,
+            if shift >= bits { n } else { shifted },
+        );
+        let mut out = original;
+        UintRef::new_mut(&mut out[..len]).unbounded_shr_assign(shift);
+        check(&out, &original, len, shifted);
+        if shift < bits {
+            let mut out = original;
+            UintRef::new_mut(&mut out[..len]).shr_assign(shift);
+            check(&out, &original, len, shifted);
+        }
+    }
+
+    #[kani::proof]
+    #[kani::unwind(5)]
+    fn uint_ref_shr_vartime_mixed_lengths() {
+        let original = kani::any::<[Word; 2]>().map(Limb);
+        let (len, shift): (usize, u32) = kani::any();
+        kani::assume(len <= 2);
+        let expected = value(&original[..len]).checked_shr(shift).unwrap_or(0);
+        let mut out = original;
+        UintRef::new_mut(&mut out[..len]).unbounded_shr_assign_vartime(shift);
+        check(&out, &original, len, expected);
+        let mut out = [Limb::ZERO; 2];
+        UintRef::new(&original[..len])
+            .unbounded_shr_vartime(shift, UintRef::new_mut(&mut out[..len]));
+        check(&out, &[Limb::ZERO; 2], len, expected);
+    }
+
+    #[kani::proof]
+    #[kani::unwind(4)]
+    fn uint_ref_shr_limb_with_carry() {
+        let original = kani::any::<[Word; 2]>().map(Limb);
+        let (shift, incoming, enabled): (u32, Word, bool) = kani::any();
+        kani::assume(shift < Word::BITS);
+        let n = value(&original);
+        // The carry is already aligned for OR into the top word, as in shr1_assign_with_carry.
+        let expected = if shift == 0 {
+            n
+        } else {
+            (n >> shift) | ((incoming as WideWord) << Word::BITS)
+        };
+        let expected_carry = if shift == 0 {
+            0
+        } else {
+            original[0].0 << (Word::BITS - shift)
+        };
+        let mut out = original;
+        let carry = UintRef::new_mut(&mut out).shr_assign_limb_with_carry(shift, Limb(incoming));
+        check(&out, &original, 2, expected);
+        assert_eq!(carry.0, expected_carry);
+        let mut out = original;
+        let carry =
+            UintRef::new_mut(&mut out).shr_assign_limb_with_carry_vartime(shift, Limb(incoming));
+        check(&out, &original, 2, expected);
+        assert_eq!(carry.0, expected_carry);
+        let mut out = original;
+        let carry = UintRef::new_mut(&mut out).shr_assign_limb(shift);
+        check(&out, &original, 2, n >> shift);
+        assert_eq!(carry.0, expected_carry);
+        if let Some(shift) = core::num::NonZeroU32::new(shift) {
+            let mut out = original;
+            let carry = UintRef::new_mut(&mut out).conditional_shr_assign_limb_nonzero(
+                shift,
+                Limb(incoming),
+                Choice::from(u8::from(enabled)),
+            );
+            check(&out, &original, 2, if enabled { expected } else { n });
+            assert_eq!(carry.0, if enabled { expected_carry } else { 0 });
+        }
+    }
+
+    #[kani::proof]
+    #[kani::unwind(5)]
+    fn uint_ref_shr_by_limbs_mixed_lengths() {
+        let original = kani::any::<[Word; 2]>().map(Limb);
+        let (len, shift, enabled): (usize, u32, bool) = kani::any();
+        kani::assume(len <= 2);
+        let n = value(&original[..len]);
+        let expected = if shift >= len as u32 {
+            0
+        } else {
+            n >> (shift * Word::BITS)
+        };
+        let mut out = original;
+        UintRef::new_mut(&mut out[..len]).unbounded_shr_assign_by_limbs_vartime(shift);
+        check(&out, &original, len, expected);
+        let mut out = original;
+        UintRef::new_mut(&mut out[..len])
+            .conditional_shr_assign_by_limbs_vartime(shift, Choice::from(u8::from(enabled)));
+        check(&out, &original, len, if enabled { expected } else { n });
+        if len > 0 {
+            let mut out = original;
+            UintRef::new_mut(&mut out[..len]).unbounded_shr_assign_by_limbs(shift);
+            check(&out, &original, len, expected);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::{Limb, U256, Uint};

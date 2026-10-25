@@ -267,3 +267,72 @@ mod tests {
         );
     }
 }
+
+#[cfg(kani)]
+mod kani_proofs {
+    use super::{ExtendedInt, ExtendedUint};
+    use crate::{Choice, U64};
+
+    type Ext = ExtendedUint<{ U64::LIMBS }, { U64::LIMBS }>;
+
+    fn ext(x: u128) -> Ext {
+        ExtendedUint(U64::from_u64(x as u64), U64::from_u64((x >> 64) as u64))
+    }
+
+    fn value(x: &Ext) -> u128 {
+        u128::from(u64::from(x.0)) | (u128::from(u64::from(x.1)) << 64)
+    }
+
+    /// A 64-bit value with a 64-bit extension behaves like `u128`.
+    #[kani::proof]
+    #[kani::unwind(5)]
+    fn extended_uint_ops_correct() {
+        let (x, flag, shift): (u128, bool, u32) = kani::any();
+        let ex = ext(x);
+
+        assert_eq!(value(&ex.wrapping_neg()), x.wrapping_neg());
+        let choice = if flag { Choice::TRUE } else { Choice::FALSE };
+        let expected = if flag { x.wrapping_neg() } else { x };
+        assert_eq!(value(&ex.wrapping_neg_if(choice)), expected);
+        assert_eq!(ex.is_zero().to_bool(), x == 0);
+        assert_eq!(
+            Option::<U64>::from(ex.checked_drop_extension()).map(u64::from),
+            u64::try_from(x).ok()
+        );
+
+        if shift < 64 {
+            assert_eq!(value(&ex.bounded_shr::<64>(shift)), x >> shift);
+            assert_eq!(value(&ex.shr_vartime(shift)), x >> shift);
+        }
+    }
+
+    /// The signed view behaves like `i128`; division by `2^k` rounds towards zero.
+    #[kani::proof]
+    #[kani::unwind(5)]
+    fn extended_int_ops_correct() {
+        let (x, y, k): (i128, i128, u32) = kani::any();
+        let (ex, ey) = (
+            ext(x as u128).as_extended_int(),
+            ext(y as u128).as_extended_int(),
+        );
+        let signed =
+            |e: ExtendedInt<{ U64::LIMBS }, { U64::LIMBS }>| value(&e.as_extended_uint()) as i128;
+
+        assert_eq!(signed(ex.wrapping_add(&ey)), x.wrapping_add(y));
+        assert_eq!(signed(ex.wrapping_sub(&ey)), x.wrapping_sub(y));
+
+        let (abs, negative) = ex.abs_sign();
+        assert_eq!((value(&abs), negative.to_bool()), (x.unsigned_abs(), x < 0));
+        let (abs, negative) = ex.dropped_abs_sign();
+        assert_eq!(
+            (u64::from(abs), negative.to_bool()),
+            (x.unsigned_abs() as u64, x < 0)
+        );
+
+        if k < 64 {
+            let expected = x / (1i128 << k);
+            assert_eq!(signed(ex.bounded_div_2k::<64>(k)), expected);
+            assert_eq!(signed(ex.div_2k_vartime(k)), expected);
+        }
+    }
+}

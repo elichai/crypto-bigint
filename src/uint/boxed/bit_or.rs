@@ -77,6 +77,63 @@ impl BitOrAssign<&BoxedUint> for BoxedUint {
     }
 }
 
+#[cfg(kani)]
+mod kani_proofs {
+    use crate::uint::boxed::kani_util::{L64, any_boxed, value};
+    use crate::{BoxedUint, Wrapping};
+
+    // Separate calls keep 64/128-bit heap lengths concrete for Kani.
+    fn check128(result: BoxedUint, expected: u128) {
+        assert_eq!((value(&result), result.bits_precision()), (expected, 128));
+    }
+
+    fn check_methods(lhs: &BoxedUint, rhs: &BoxedUint, expected: u128) {
+        check128(lhs.bitor(rhs), expected);
+        check128(lhs.wrapping_or(rhs), expected);
+        check128(
+            lhs.checked_or(rhs).into_option().expect("always Some"),
+            expected,
+        );
+    }
+
+    fn check_operators(lhs: &BoxedUint, rhs: &BoxedUint, expected: u128) {
+        check128(lhs | rhs, expected);
+        check128(lhs.clone() | rhs, expected);
+        check128(lhs | rhs.clone(), expected);
+        check128(lhs.clone() | rhs.clone(), expected);
+        let mut assigned = lhs.clone();
+        assigned |= rhs;
+        check128(assigned, expected);
+        let mut assigned = lhs.clone();
+        assigned |= rhs.clone();
+        check128(assigned, expected);
+        let mut wrapped = Wrapping(lhs.clone());
+        let wrapped_rhs = Wrapping(rhs.clone());
+        check128((&wrapped | &wrapped_rhs).0, expected);
+        wrapped |= wrapped_rhs;
+        check128(wrapped.0, expected);
+    }
+
+    /// All bits of both 64/128-bit operands, including either widening direction.
+    #[kani::proof]
+    #[kani::unwind(9)]
+    fn boxed_bitor_methods_mixed_precision() {
+        let (a, b) = (any_boxed::<L64>(), any_boxed::<{ 2 * L64 }>());
+        let expected = value(&a) | value(&b);
+        check_methods(&a, &b, expected);
+        check_methods(&b, &a, expected);
+    }
+
+    #[kani::proof]
+    #[kani::unwind(9)]
+    fn boxed_bitor_operators_mixed_precision() {
+        let (a, b) = (any_boxed::<L64>(), any_boxed::<{ 2 * L64 }>());
+        let expected = value(&a) | value(&b);
+        check_operators(&a, &b, expected);
+        check_operators(&b, &a, expected);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::{BitOrAssign, BoxedUint, Limb};

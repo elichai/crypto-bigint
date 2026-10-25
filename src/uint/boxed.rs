@@ -690,3 +690,316 @@ mod tests {
         crate::traits::tests::test_unsigned_monty_form::<BoxedUint>();
     }
 }
+
+/// Helpers for Kani proofs over `BoxedUint`s of at most 128 bits.
+#[cfg(kani)]
+pub(crate) mod kani_util {
+    use super::BoxedUint;
+    use crate::{Limb, Word};
+
+    /// Number of limbs in 64 bits.
+    pub(crate) const L64: usize = (u64::BITS / Limb::BITS) as usize;
+
+    /// An arbitrary value with exactly `N` limbs. The limb count is concrete: symbolic `Vec`
+    /// lengths make Kani's heap model blow up.
+    pub(crate) fn any_boxed<const N: usize>() -> BoxedUint {
+        BoxedUint::from_words(kani::any::<[Word; N]>())
+    }
+
+    /// The value of `x`, which must have at most 128 bits of precision.
+    pub(crate) fn value(x: &BoxedUint) -> u128 {
+        assert!(x.bits_precision() <= u128::BITS);
+        let mut acc = 0;
+        for (i, limb) in x.as_limbs().iter().enumerate() {
+            acc |= u128::from(limb.0) << (i as u32 * Limb::BITS);
+        }
+        acc
+    }
+}
+
+#[cfg(kani)]
+mod kani_proofs {
+    use super::kani_util::{L64, any_boxed, value};
+    use crate::{BoxedUint, CheckedSub, CtOption, Limb, NonZero, Odd, One, Resize, Word, Zero};
+
+    fn check_nonzero(result: CtOption<NonZero<BoxedUint>>, n: u128) {
+        assert_eq!(result.is_some().to_bool(), n != 0);
+        let inner = result.as_inner_unchecked().as_ref();
+        assert_eq!(inner.bits_precision(), 128);
+        // Even an absent CtOption must contain a valid wrapper, as its constructors promise.
+        assert_ne!(value(inner), 0);
+        if n != 0 {
+            assert_eq!(value(inner), n);
+        }
+    }
+
+    fn check_odd(result: CtOption<Odd<BoxedUint>>, n: u128) {
+        assert_eq!(result.is_some().to_bool(), n & 1 == 1);
+        let inner = result.as_inner_unchecked().as_ref();
+        assert_eq!(inner.bits_precision(), 128);
+        assert_eq!(value(inner) & 1, 1);
+        if n & 1 == 1 {
+            assert_eq!(value(inner), n);
+        }
+    }
+
+    /// Every u128: Boxed conversion presence, successful values, and absent payload invariants.
+    #[kani::proof]
+    #[kani::unwind(8)]
+    fn boxed_fallible_wrappers_native() {
+        let input = any_boxed::<{ 2 * L64 }>();
+        let n = value(&input);
+        check_nonzero(input.to_nz(), n);
+        check_nonzero(input.clone().into_nz(), n);
+        check_odd(input.to_odd(), n);
+        check_odd(input.clone().into_odd(), n);
+        let borrowed = input.as_nz_vartime();
+        assert_eq!(borrowed.is_some(), n != 0);
+        if let Some(nonzero) = borrowed {
+            assert_eq!(value(nonzero.as_ref()), n);
+            assert_eq!(nonzero.as_ref().bits_precision(), 128);
+        }
+        let borrowed = input.as_odd_vartime();
+        assert_eq!(borrowed.is_some(), n & 1 == 1);
+        if let Some(odd) = borrowed {
+            assert_eq!(value(odd.as_ref()), n);
+            assert_eq!(odd.as_ref().bits_precision(), 128);
+        }
+    }
+
+    /// Internal defaulting conversions return exactly one when the wrapper predicate fails.
+    #[kani::proof]
+    #[kani::unwind(8)]
+    fn boxed_defaulting_wrappers_native() {
+        let input = any_boxed::<{ 2 * L64 }>();
+        let n = value(&input);
+        let (nonzero, present) = input.to_nz_or_one();
+        assert_eq!(present.to_bool(), n != 0);
+        assert_eq!(value(nonzero.as_ref()), if n == 0 { 1 } else { n });
+        assert_eq!(nonzero.as_ref().bits_precision(), 128);
+        let (odd, present) = input.to_odd_or_one();
+        assert_eq!(present.to_bool(), n & 1 == 1);
+        assert_eq!(value(odd.as_ref()), if n & 1 == 1 { n } else { 1 });
+        assert_eq!(odd.as_ref().bits_precision(), 128);
+    }
+
+    /// Identity constructors and mutation preserve arbitrary u128 storage precision.
+    #[kani::proof]
+    #[kani::unwind(8)]
+    fn boxed_identity_mutation_native() {
+        let mut input = any_boxed::<{ 2 * L64 }>();
+        let one = BoxedUint::one_like(&input);
+        assert_eq!((value(&one), one.bits_precision()), (1, 128));
+        assert_eq!(input.is_one().to_bool(), value(&input) == 1);
+        num_traits::One::set_one(&mut input);
+        assert_eq!((value(&input), input.bits_precision()), (1, 128));
+        assert!(One::is_one(&input).to_bool());
+        assert!(num_traits::One::is_one(&input));
+        num_traits::Zero::set_zero(&mut input);
+        assert_eq!((value(&input), input.bits_precision()), (0, 128));
+        assert!(Zero::is_zero(&input).to_bool());
+        assert!(num_traits::Zero::is_zero(&input));
+    }
+
+    fn resized_precision(bits: u32) -> u32 {
+        bits.div_ceil(Word::BITS).max(1) * Word::BITS
+    }
+
+    fn check_precision_constructors<const BITS: u32>() {
+        let precision = resized_precision(BITS);
+        let zero = BoxedUint::zero_with_precision(BITS);
+        assert_eq!(zero.bits_precision(), precision);
+        for limb in zero.as_limbs() {
+            assert_eq!(limb.0, 0);
+        }
+        let one = BoxedUint::one_with_precision(BITS);
+        assert_eq!(one.bits_precision(), precision);
+        assert_eq!(one.as_limbs()[0].0, 1);
+        for limb in &one.as_limbs()[1..] {
+            assert_eq!(limb.0, 0);
+        }
+        if BITS > 0 {
+            let maximum = BoxedUint::max(BITS);
+            assert_eq!(maximum.bits_precision(), precision);
+            for limb in maximum.as_limbs() {
+                assert_eq!(limb.0, Word::MAX);
+            }
+        }
+    }
+
+    /// These boundary requests are bounded coverage; max(0)'s doc mismatch is a separate regression.
+    // Symbolic requests and an exhaustive loop over all 129 requests timed out.
+    #[kani::proof]
+    #[kani::unwind(8)]
+    fn boxed_precision_constructor_boundaries() {
+        check_precision_constructors::<0>();
+        check_precision_constructors::<1>();
+        check_precision_constructors::<{ Word::BITS - 1 }>();
+        check_precision_constructors::<{ Word::BITS }>();
+        check_precision_constructors::<{ Word::BITS + 1 }>();
+        check_precision_constructors::<64>();
+        check_precision_constructors::<127>();
+        check_precision_constructors::<128>();
+    }
+
+    fn check_unchecked_resize<const BITS: u32>() {
+        let input = any_boxed::<{ 2 * L64 }>();
+        let precision = resized_precision(BITS);
+        let mask = u128::MAX >> (u128::BITS - precision);
+        // A zero request discards all words before the empty vector normalizes to one zero limb.
+        let expected = if BITS == 0 { 0 } else { value(&input) & mask };
+        let mut direct = input.clone();
+        direct.resize_in_place_unchecked(BITS);
+        assert_eq!(
+            (value(&direct), direct.bits_precision()),
+            (expected, precision)
+        );
+        let result = input.resize_unchecked(BITS);
+        assert_eq!(
+            (value(&result), result.bits_precision()),
+            (expected, precision)
+        );
+    }
+
+    #[kani::proof]
+    #[kani::unwind(8)]
+    fn boxed_resize_unchecked_boundaries() {
+        check_unchecked_resize::<0>();
+        check_unchecked_resize::<63>();
+        check_unchecked_resize::<64>();
+        check_unchecked_resize::<65>();
+        check_unchecked_resize::<127>();
+        check_unchecked_resize::<128>();
+    }
+
+    fn check_checked_resize<const BITS: u32>() {
+        let input = any_boxed::<{ 2 * L64 }>();
+        let n = value(&input);
+        let mask = if BITS == 0 {
+            0
+        } else {
+            u128::MAX >> (u128::BITS - BITS)
+        };
+        let fits = n <= mask;
+        let result = input.clone().try_resize(BITS);
+        assert_eq!(result.is_some(), fits);
+        if fits {
+            let result = result.unwrap();
+            assert_eq!(
+                (value(&result), result.bits_precision()),
+                (n, resized_precision(BITS))
+            );
+            let result = input.resize(BITS);
+            assert_eq!(
+                (value(&result), result.bits_precision()),
+                (n, resized_precision(BITS))
+            );
+        }
+    }
+
+    #[kani::proof]
+    #[kani::unwind(8)]
+    fn boxed_resize_checked_boundaries() {
+        check_checked_resize::<0>();
+        check_checked_resize::<63>();
+        check_checked_resize::<64>();
+        check_checked_resize::<65>();
+        check_checked_resize::<127>();
+        check_checked_resize::<128>();
+    }
+
+    #[kani::proof]
+    #[kani::unwind(6)]
+    fn boxed_is_within_bits_native() {
+        let input = any_boxed::<{ 2 * L64 }>();
+        let bits: u32 = kani::any();
+        let expected = if bits >= u128::BITS {
+            true
+        } else if bits == 0 {
+            value(&input) == 0
+        } else {
+            value(&input) <= u128::MAX >> (u128::BITS - bits)
+        };
+        assert_eq!(input.is_within_bits(bits), expected);
+    }
+
+    /// `|=` with a wider rhs (fixed in 3f7dede) widens `self` and ORs the zero-extended values.
+    #[kani::proof]
+    #[kani::unwind(5)]
+    fn boxed_bitor_assign_wider_rhs() {
+        let (mut x, wide) = (any_boxed::<L64>(), any_boxed::<{ 2 * L64 }>());
+        let expected = value(&x) | value(&wide);
+        x |= &wide;
+        assert_eq!((value(&x), x.bits_precision()), (expected, 128));
+    }
+
+    /// Binary `|`, `&` and `^` between a 64-bit and a 128-bit value act on the zero-extended
+    /// values and produce the wider precision.
+    #[kani::proof]
+    #[kani::unwind(5)]
+    fn boxed_bit_ops_mixed_width() {
+        let (narrow, wide) = (any_boxed::<L64>(), any_boxed::<{ 2 * L64 }>());
+        let (vn, vw) = (value(&narrow), value(&wide));
+
+        let res = narrow.bitor(&wide);
+        assert_eq!((value(&res), res.bits_precision()), (vn | vw, 128));
+        let res = wide.bitand(&narrow);
+        assert_eq!((value(&res), res.bits_precision()), (vn & vw, 128));
+        let res = narrow.bitxor(&wide);
+        assert_eq!((value(&res), res.bits_precision()), (vn ^ vw, 128));
+    }
+
+    /// Adding a 128-bit rhs to a 64-bit `self`: `carrying_add` widens to 128 bits, while
+    /// `overflowing_add` and `wrapping_add` keep 64 bits, and `overflowing_add` also reports a
+    /// rhs that does not fit.
+    #[kani::proof]
+    #[kani::unwind(5)]
+    fn boxed_add_wider_rhs() {
+        let (narrow, wide) = (any_boxed::<L64>(), any_boxed::<{ 2 * L64 }>());
+        let (vn, vw) = (value(&narrow), value(&wide));
+
+        let (res, carry) = narrow.carrying_add(&wide, Limb::ZERO);
+        let (sum, overflow) = vn.overflowing_add(vw);
+        assert_eq!((value(&res), res.bits_precision()), (sum, 128));
+        assert_eq!(carry.0, Word::from(overflow));
+
+        let sum64 = vn + (vw & u128::from(u64::MAX));
+        let (res, overflow) = narrow.overflowing_add(&wide);
+        assert_eq!(
+            (value(&res), res.bits_precision()),
+            (sum64 as u64 as u128, 64)
+        );
+        assert_eq!(overflow.to_bool(), sum64 >> 64 != 0 || vw >> 64 != 0);
+        let res = narrow.wrapping_add(&wide);
+        assert_eq!(
+            (value(&res), res.bits_precision()),
+            (sum64 as u64 as u128, 64)
+        );
+    }
+
+    /// Subtracting a 128-bit rhs from a 64-bit `self`: `borrowing_sub` widens to 128 bits, while
+    /// `underflowing_sub`, `wrapping_sub` and `checked_sub` keep 64 bits and report underflow
+    /// exactly when `rhs > self`.
+    #[kani::proof]
+    #[kani::unwind(5)]
+    fn boxed_sub_wider_rhs() {
+        let (narrow, wide) = (any_boxed::<L64>(), any_boxed::<{ 2 * L64 }>());
+        let (vn, vw) = (value(&narrow), value(&wide));
+
+        let (res, borrow) = narrow.borrowing_sub(&wide, Limb::ZERO);
+        assert_eq!(
+            (value(&res), res.bits_precision()),
+            (vn.wrapping_sub(vw), 128)
+        );
+        assert_eq!(borrow.0, if vw > vn { Word::MAX } else { 0 });
+
+        let diff64 = u128::from((vn as u64).wrapping_sub(vw as u64));
+        let (res, underflow) = narrow.underflowing_sub(&wide);
+        assert_eq!((value(&res), res.bits_precision()), (diff64, 64));
+        assert_eq!(underflow.to_bool(), vw > vn);
+        let res = narrow.wrapping_sub(&wide);
+        assert_eq!((value(&res), res.bits_precision()), (diff64, 64));
+        let res = Option::<BoxedUint>::from(narrow.checked_sub(&wide));
+        assert_eq!(res.map(|r| value(&r)), vn.checked_sub(vw));
+    }
+}

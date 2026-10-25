@@ -571,3 +571,153 @@ mod tests {
         assert_eq!(x.saturating_square(), U128::MAX);
     }
 }
+
+#[cfg(kani)]
+mod kani_proofs {
+    use crate::{I64, I128, Limb, U64, U128};
+
+    fn native_product(a: u64, b: u64) -> u128 {
+        if Limb::BITS == 32 {
+            let (a_lo, a_hi) = (u64::from(a as u32), a >> 32);
+            let (b_lo, b_hi) = (u64::from(b as u32), b >> 32);
+            // Expand (a_lo + 2^32·a_hi)(b_lo + 2^32·b_hi); the full product fits u128.
+            // Native 32×32 products share the implementation's multiplier circuits.
+            u128::from(a_lo * b_lo)
+                + ((u128::from(a_lo * b_hi) + u128::from(a_hi * b_lo)) << 32)
+                + (u128::from(a_hi * b_hi) << 64)
+        } else {
+            u128::from(a) * u128::from(b)
+        }
+    }
+
+    /// 64-bit signed multiplication agrees with `i128`, including `MIN` operands. The reference
+    /// multiplies the magnitudes as `u128` (the same product the code forms) and then applies the
+    /// sign, so the solver does not have to prove two multiplier circuits equivalent.
+    // CaDiCaL completes the 32-bit overflow circuit that exceeds Z3's time budget.
+    #[kani::proof]
+    #[cfg_attr(cpubits = "32", kani::solver(cadical))]
+    #[cfg_attr(not(cpubits = "32"), kani::solver(z3))]
+    #[kani::unwind(5)]
+    fn int_mul_i64_correct() {
+        let (a, b): (i64, i64) = kani::any();
+        let (ia, ib) = (I64::from_i64(a), I64::from_i64(b));
+
+        // Check magnitudes separately so the native product shares the implementation's inputs.
+        let (abs_a, abs_b) = (u64::from(ia.abs()), u64::from(ib.abs()));
+        assert_eq!((abs_a, abs_b), (a.unsigned_abs(), b.unsigned_abs()));
+        let magnitude = native_product(abs_a, abs_b);
+        let negative = (a < 0) != (b < 0);
+        let product = if negative {
+            (magnitude as i128).wrapping_neg()
+        } else {
+            magnitude as i128
+        };
+        let fits = i64::try_from(product).ok();
+
+        let wide: I128 = ia.concatenating_mul(&ib);
+        assert_eq!(i128::from(wide), product);
+        let (lo, hi, negate) = ia.widening_mul(&ib);
+        assert_eq!(
+            u128::from(u64::from(lo)) | (u128::from(u64::from(hi)) << 64),
+            magnitude
+        );
+        assert_eq!(negate.to_bool(), negative);
+        assert_eq!(
+            Option::<I64>::from(ia.checked_mul(&ib)).map(i64::from),
+            fits
+        );
+        let saturated = fits.unwrap_or(if negative { i64::MIN } else { i64::MAX });
+        assert_eq!(i64::from(ia.saturating_mul(&ib)), saturated);
+    }
+
+    /// Mixed multiplication covers all `i64 × u64` inputs on 64-bit words and `i32 × u32`
+    /// inputs on 32-bit words, including signed `MIN` and unsigned `MAX` in each domain.
+    #[kani::proof]
+    #[kani::solver(z3)]
+    #[kani::unwind(5)]
+    fn int_mul_unsigned_i64_correct() {
+        // shortcut: wider mixed inputs exceed 120s on 32-bit words; widen after solver improvements.
+        let (a, b) = if Limb::BITS == 32 {
+            let (a, b): (i32, u32) = kani::any();
+            (i64::from(a), u64::from(b))
+        } else {
+            kani::any::<(i64, u64)>()
+        };
+        let (ia, ub) = (I64::from_i64(a), U64::from_u64(b));
+        let abs_a = u64::from(ia.abs());
+        assert_eq!(abs_a, a.unsigned_abs());
+        let magnitude = native_product(abs_a, b);
+        let product = if a < 0 {
+            (magnitude as i128).wrapping_neg()
+        } else {
+            magnitude as i128
+        };
+        let fits = i64::try_from(product).ok();
+
+        let wide: I128 = ia.concatenating_mul_unsigned(&ub);
+        assert_eq!(i128::from(wide), product);
+        let wide: I128 = ub.concatenating_mul_signed(&ia);
+        assert_eq!(i128::from(wide), product);
+        let (lo, hi, negate) = ia.widening_mul_unsigned(&ub);
+        assert_eq!(
+            (u64::from(lo), u64::from(hi)),
+            (magnitude as u64, (magnitude >> 64) as u64)
+        );
+        assert_eq!(negate.to_bool(), a < 0);
+        let (lo, hi, negate) = ub.widening_mul_signed(&ia);
+        assert_eq!(
+            (u64::from(lo), u64::from(hi)),
+            (magnitude as u64, (magnitude >> 64) as u64)
+        );
+        assert_eq!(negate.to_bool(), a < 0);
+        assert_eq!(
+            Option::<I64>::from(ia.checked_mul_unsigned(&ub)).map(i64::from),
+            fits
+        );
+        assert_eq!(
+            Option::<I64>::from(ub.checked_mul_signed(&ia)).map(i64::from),
+            fits
+        );
+    }
+
+    /// Wrapping uses the operands' bits directly; a native wrapping oracle shares that circuit.
+    #[kani::proof]
+    #[kani::solver(z3)]
+    #[kani::unwind(5)]
+    fn int_wrapping_mul_i64_correct() {
+        let (a, b): (i64, i64) = kani::any();
+        assert_eq!(
+            i64::from(I64::from_i64(a).wrapping_mul(&I64::from_i64(b))),
+            native_product(a as u64, b as u64) as i64
+        );
+    }
+
+    /// Signed squares return unsigned values, so the checked/saturating bound is `u64::MAX`.
+    #[kani::proof]
+    #[kani::solver(z3)]
+    #[kani::unwind(5)]
+    fn int_square_i64_correct() {
+        let a: i64 = kani::any();
+        let ia = I64::from_i64(a);
+        let magnitude = u64::from(ia.abs());
+        assert_eq!(magnitude, a.unsigned_abs());
+        // For |a| = lo + 2^32·hi, a² = lo² + 2^33·lo·hi + 2^64·hi² < 2^128.
+        // This exact native identity lets 32-bit words share the limb multipliers.
+        let square = if Limb::BITS == 32 {
+            let (lo, hi) = (u64::from(magnitude as u32), magnitude >> 32);
+            u128::from(lo * lo) + (u128::from(lo * hi) << 33) + (u128::from(hi * hi) << 64)
+        } else {
+            u128::from(magnitude) * u128::from(magnitude)
+        };
+        let fits = u64::try_from(square).ok();
+
+        let wide: U128 = ia.concatenating_square();
+        assert_eq!(u128::from(wide), square);
+        assert_eq!(u64::from(ia.wrapping_square()), square as u64);
+        assert_eq!(
+            Option::<U64>::from(ia.checked_square()).map(u64::from),
+            fits
+        );
+        assert_eq!(u64::from(ia.saturating_square()), fits.unwrap_or(u64::MAX));
+    }
+}

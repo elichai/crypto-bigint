@@ -377,6 +377,161 @@ where
     }
 }
 
+#[cfg(kani)]
+mod kani_proofs {
+    use crate::{Checked, CheckedDiv, Choice, CtEq, CtOption, CtSelect, Limb, Word};
+
+    #[kani::proof]
+    fn checked_add_native() {
+        let (a, b, a_valid, b_valid): (Word, Word, bool, bool) = kani::any();
+        let a_checked = Checked(CtOption::new(Limb(a), Choice::from_u8_lsb(a_valid as u8)));
+        let b_checked = Checked(CtOption::new(Limb(b), Choice::from_u8_lsb(b_valid as u8)));
+        let expected = if a_valid && b_valid {
+            a.checked_add(b).map(Limb)
+        } else {
+            None
+        };
+        assert_eq!(Option::<Limb>::from(a_checked + b_checked), expected);
+        assert_eq!(Option::<Limb>::from(&a_checked + b_checked), expected);
+        assert_eq!(Option::<Limb>::from(a_checked + &b_checked), expected);
+        assert_eq!(Option::<Limb>::from(&a_checked + &b_checked), expected);
+    }
+
+    #[kani::proof]
+    fn checked_sub_native() {
+        let (a, b, a_valid, b_valid): (Word, Word, bool, bool) = kani::any();
+        let a_checked = Checked(CtOption::new(Limb(a), Choice::from_u8_lsb(a_valid as u8)));
+        let b_checked = Checked(CtOption::new(Limb(b), Choice::from_u8_lsb(b_valid as u8)));
+        let expected = if a_valid && b_valid {
+            a.checked_sub(b).map(Limb)
+        } else {
+            None
+        };
+        assert_eq!(Option::<Limb>::from(a_checked - b_checked), expected);
+        assert_eq!(Option::<Limb>::from(&a_checked - b_checked), expected);
+        assert_eq!(Option::<Limb>::from(a_checked - &b_checked), expected);
+        assert_eq!(Option::<Limb>::from(&a_checked - &b_checked), expected);
+    }
+
+    #[kani::proof]
+    fn checked_mul_native() {
+        let (a, b, a_valid, b_valid): (Word, Word, bool, bool) = kani::any();
+        let a_checked = Checked(CtOption::new(Limb(a), Choice::from_u8_lsb(a_valid as u8)));
+        let b_checked = Checked(CtOption::new(Limb(b), Choice::from_u8_lsb(b_valid as u8)));
+        let expected = if a_valid && b_valid {
+            a.checked_mul(b).map(Limb)
+        } else {
+            None
+        };
+        assert_eq!(Option::<Limb>::from(a_checked * b_checked), expected);
+        assert_eq!(Option::<Limb>::from(&a_checked * b_checked), expected);
+        assert_eq!(Option::<Limb>::from(a_checked * &b_checked), expected);
+        assert_eq!(Option::<Limb>::from(&a_checked * &b_checked), expected);
+    }
+
+    // The wrapper must return Some(a / b) iff both inputs are present and b != 0.
+    // Compare with the inner CtOption and split validity cases to share the division circuit;
+    // correctness of the inner division is a separate obligation.
+    #[kani::proof]
+    fn checked_div_option_composition() {
+        let (a, b): (Word, Word) = kani::any();
+        let a_checked = Checked::new(Limb(a));
+        let b_checked = Checked::new(Limb(b));
+        let expected = CheckedDiv::checked_div(&Limb(a), &Limb(b)).into_option();
+        assert_eq!(Option::<Limb>::from(a_checked / b_checked), expected);
+        assert_eq!(Option::<Limb>::from(&a_checked / b_checked), expected);
+        assert_eq!(Option::<Limb>::from(a_checked / &b_checked), expected);
+        assert_eq!(Option::<Limb>::from(&a_checked / &b_checked), expected);
+    }
+
+    #[kani::proof]
+    fn checked_div_absent_propagation() {
+        let (a, b, a_valid, b_valid): (Word, Word, bool, bool) = kani::any();
+        kani::assume(!a_valid || !b_valid);
+        let a_checked = Checked(CtOption::new(Limb(a), Choice::from_u8_lsb(a_valid as u8)));
+        let b_checked = Checked(CtOption::new(Limb(b), Choice::from_u8_lsb(b_valid as u8)));
+        assert!((a_checked / b_checked).0.is_none().to_bool());
+        assert!((&a_checked / b_checked).0.is_none().to_bool());
+        assert!((a_checked / &b_checked).0.is_none().to_bool());
+        assert!((&a_checked / &b_checked).0.is_none().to_bool());
+    }
+
+    #[kani::proof]
+    fn checked_div_zero_divisor() {
+        let (a, a_valid, b_valid): (Word, bool, bool) = kani::any();
+        let a_checked = Checked(CtOption::new(Limb(a), Choice::from_u8_lsb(a_valid as u8)));
+        let b_checked = Checked(CtOption::new(
+            Limb::ZERO,
+            Choice::from_u8_lsb(b_valid as u8),
+        ));
+        assert!((a_checked / b_checked).0.is_none().to_bool());
+        assert!((&a_checked / b_checked).0.is_none().to_bool());
+        assert!((a_checked / &b_checked).0.is_none().to_bool());
+        assert!((&a_checked / &b_checked).0.is_none().to_bool());
+    }
+
+    /// Every dividend and validity pair, against native division in all four operator forms.
+    fn check_div_native<const DIVISOR: Word>() {
+        let (a, a_valid, b_valid): (Word, bool, bool) = kani::any();
+        let a_checked = Checked(CtOption::new(Limb(a), Choice::from_u8_lsb(a_valid as u8)));
+        let b_checked = Checked(CtOption::new(
+            Limb(DIVISOR),
+            Choice::from_u8_lsb(b_valid as u8),
+        ));
+        let expected = if a_valid && b_valid {
+            Some(a / DIVISOR)
+        } else {
+            None
+        };
+        let word = |value: Checked<Limb>| Option::<Limb>::from(value).map(|limb| limb.0);
+        assert_eq!(word(a_checked / b_checked), expected);
+        assert_eq!(word(&a_checked / b_checked), expected);
+        assert_eq!(word(a_checked / &b_checked), expected);
+        assert_eq!(word(&a_checked / &b_checked), expected);
+    }
+
+    #[kani::proof]
+    #[kani::solver(z3)]
+    fn checked_div_native_high_bit() {
+        check_div_native::<{ 1 << (Word::BITS - 1) }>();
+    }
+
+    #[kani::proof]
+    #[kani::solver(z3)]
+    fn checked_div_native_max() {
+        check_div_native::<{ Word::MAX }>();
+    }
+
+    #[kani::proof]
+    fn checked_eq_select_native() {
+        let (a, b, a_valid, b_valid, flag): (Word, Word, bool, bool, bool) = kani::any();
+        let a_checked = Checked(CtOption::new(Limb(a), Choice::from_u8_lsb(a_valid as u8)));
+        let b_checked = Checked(CtOption::new(Limb(b), Choice::from_u8_lsb(b_valid as u8)));
+        let a_option = if a_valid { Some(Limb(a)) } else { None };
+        let b_option = if b_valid { Some(Limb(b)) } else { None };
+        let selected = a_checked.ct_select(&b_checked, Choice::from_u8_lsb(flag as u8));
+        assert_eq!(a_checked.ct_eq(&b_checked).to_bool(), a_option == b_option);
+        assert_eq!(
+            Option::<Limb>::from(selected),
+            if flag { b_option } else { a_option }
+        );
+        assert_eq!(
+            *selected.0.as_inner_unchecked(),
+            Limb(if flag { b } else { a })
+        );
+        assert_eq!(Option::<Limb>::from(Checked::from(a_checked.0)), a_option);
+        assert_eq!(Option::<Limb>::from(CtOption::from(a_checked)), a_option);
+        let round_trip = CtOption::from(Checked::from(a_checked.0));
+        assert_eq!(*round_trip.as_inner_unchecked(), Limb(a));
+        assert_eq!(round_trip.is_some().to_bool(), a_valid);
+        assert_eq!(
+            Option::<Limb>::from(Checked::<Limb>::default()),
+            Some(Limb::ZERO)
+        );
+        assert_eq!(Option::<Limb>::from(Checked::new(Limb(a))), Some(Limb(a)));
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::Checked;

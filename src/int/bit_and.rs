@@ -82,6 +82,48 @@ impl<const LIMBS: usize> BitAndAssign<&Int<LIMBS>> for Int<LIMBS> {
     }
 }
 
+#[cfg(kani)]
+mod kani_proofs {
+    use crate::{I128, Limb, Word};
+
+    #[kani::proof]
+    #[kani::unwind(5)]
+    fn int_bitand_native() {
+        let (a, b): (i128, i128) = kani::any();
+        let (ia, ib) = (I128::from_i128(a), I128::from_i128(b));
+        assert_eq!(i128::from(ia.bitand(&ib)), a & b);
+        assert_eq!(i128::from(ia.wrapping_and(&ib)), a & b);
+        assert_eq!(
+            Option::<I128>::from(ia.checked_and(&ib)).map(i128::from),
+            Some(a & b)
+        );
+        assert_eq!(i128::from(ia & ib), a & b);
+        assert_eq!(i128::from(&ia & ib), a & b);
+        assert_eq!(i128::from(ia & &ib), a & b);
+        assert_eq!(i128::from(&ia & &ib), a & b);
+        let mut assigned = ia;
+        assigned &= ib;
+        assert_eq!(i128::from(assigned), a & b);
+        assigned = ia;
+        assigned &= &ib;
+        assert_eq!(i128::from(assigned), a & b);
+    }
+
+    #[kani::proof]
+    #[kani::unwind(5)]
+    fn int_bitand_limb_native() {
+        let (a, mask): (i128, Word) = kani::any();
+        let result = I128::from_i128(a).bitand_limb(Limb(mask));
+        let mut repeated = 0u128;
+        let mut i = 0;
+        while i < I128::LIMBS {
+            repeated |= (mask as u128) << (i as u32 * Limb::BITS);
+            i += 1;
+        }
+        assert_eq!(i128::from(result), a & repeated as i128);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::I128;

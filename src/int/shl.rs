@@ -149,6 +149,56 @@ impl<const LIMBS: usize> ShlVartime for Int<LIMBS> {
     }
 }
 
+#[cfg(kani)]
+mod kani_proofs {
+    use crate::I128;
+
+    #[kani::proof]
+    #[kani::unwind(9)]
+    fn int_shl_native() {
+        let (x, shift): (i128, u32) = kani::any();
+        let value = I128::from_i128(x);
+        let checked = x.checked_shl(shift);
+        assert_eq!(
+            Option::<I128>::from(value.overflowing_shl(shift)).map(i128::from),
+            checked
+        );
+        assert_eq!(
+            value.overflowing_shl_vartime(shift).map(i128::from),
+            checked
+        );
+        assert_eq!(i128::from(value.unbounded_shl(shift)), checked.unwrap_or(0));
+        assert_eq!(
+            i128::from(value.unbounded_shl_vartime(shift)),
+            checked.unwrap_or(0)
+        );
+        assert_eq!(i128::from(value.wrapping_shl(shift)), x.wrapping_shl(shift));
+        assert_eq!(
+            i128::from(value.wrapping_shl_vartime(shift)),
+            x.wrapping_shl(shift)
+        );
+        if shift < 128 {
+            assert_eq!(i128::from(value.shl(shift)), x << shift);
+            assert_eq!(i128::from(value.shl_vartime(shift)), x << shift);
+        }
+    }
+
+    #[kani::proof]
+    #[kani::unwind(9)]
+    fn int_shl_operators_native() {
+        let (x, shift): (i128, u32) = kani::any();
+        kani::assume(shift < 128);
+        let value = I128::from_i128(x);
+        assert_eq!(i128::from(value << shift), x << shift);
+        assert_eq!(i128::from(&value << shift), x << shift);
+        assert_eq!(i128::from(value << shift as i32), x << shift);
+        assert_eq!(i128::from(&value << shift as usize), x << shift);
+        let mut assigned = value;
+        assigned <<= shift;
+        assert_eq!(i128::from(assigned), x << shift);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::{I256, ShlVartime};

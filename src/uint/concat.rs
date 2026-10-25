@@ -145,3 +145,22 @@ mod tests {
         assert_eq!(wide, Uint::ONE);
     }
 }
+
+#[cfg(kani)]
+mod kani_proofs {
+    use crate::{U64, U128};
+
+    /// `concat` places `hi` above `lo`, and `split` inverts it.
+    #[kani::proof]
+    #[kani::unwind(5)]
+    fn uint_concat_split_roundtrip() {
+        let (lo, hi): (u64, u64) = kani::any();
+        let wide: U128 = U64::from_u64(lo).concat(&U64::from_u64(hi));
+        assert_eq!(u128::from(wide), (u128::from(hi) << 64) | u128::from(lo));
+
+        let (lo2, hi2) = wide.split();
+        assert_eq!((u64::from(lo2), u64::from(hi2)), (lo, hi));
+        let (lo3, hi3): (U64, U64) = wide.split_mixed();
+        assert_eq!((u64::from(lo3), u64::from(hi3)), (lo, hi));
+    }
+}

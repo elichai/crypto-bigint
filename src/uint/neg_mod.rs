@@ -66,3 +66,19 @@ mod tests {
         assert_eq!(expected, actual);
     }
 }
+
+#[cfg(kani)]
+mod kani_proofs {
+    use crate::{NonZero, U128};
+
+    /// For `a < p`, `neg_mod` returns `-a mod p`.
+    #[kani::proof]
+    #[kani::unwind(5)]
+    fn uint_neg_mod_correct() {
+        let (a, p): (u128, u128) = kani::any();
+        kani::assume(a < p);
+        let p_nz = NonZero::new(U128::from_u128(p)).unwrap();
+        let res = U128::from_u128(a).neg_mod(&p_nz);
+        assert_eq!(u128::from(res), if a == 0 { 0 } else { p - a });
+    }
+}

@@ -62,6 +62,74 @@ impl AddMod for BoxedUint {
     }
 }
 
+#[cfg(kani)]
+mod kani_proofs {
+    use crate::uint::boxed::kani_util::{L64, any_boxed, value};
+    use crate::{Limb, NonZero};
+
+    /// Reduced operands need at most one subtraction of the modulus, even if their sum overflows.
+    #[kani::proof]
+    #[kani::unwind(5)]
+    fn boxed_add_mod_correct() {
+        let (a, b, p) = (
+            any_boxed::<{ 2 * L64 }>(),
+            any_boxed::<{ 2 * L64 }>(),
+            any_boxed::<{ 2 * L64 }>(),
+        );
+        let (va, vb, vp) = (value(&a), value(&b), value(&p));
+        kani::assume(va < vp && vb < vp);
+        let p = NonZero::new(p).unwrap();
+        let (sum, carry) = va.overflowing_add(vb);
+        let expected = if carry || sum >= vp {
+            sum.wrapping_sub(vp)
+        } else {
+            sum
+        };
+        let result = a.add_mod(&b, &p);
+        assert_eq!((value(&result), result.bits_precision()), (expected, 128));
+        assert!(value(&result) < vp);
+    }
+
+    /// Doubling computes `2a mod p`, with the 129th sum bit retained in `carry`.
+    #[kani::proof]
+    #[kani::unwind(5)]
+    fn boxed_double_mod_correct() {
+        let (a, p) = (any_boxed::<{ 2 * L64 }>(), any_boxed::<{ 2 * L64 }>());
+        let (va, vp) = (value(&a), value(&p));
+        kani::assume(va < vp);
+        let (sum, carry) = va.overflowing_add(va);
+        let expected = if carry || sum >= vp {
+            sum.wrapping_sub(vp)
+        } else {
+            sum
+        };
+        let result = a.double_mod(&NonZero::new(p).unwrap());
+        assert_eq!((value(&result), result.bits_precision()), (expected, 128));
+    }
+
+    /// For `p = 2^128 - c`, including `c = 0`, return the reduced sum at the original precision.
+    #[kani::proof]
+    #[kani::unwind(5)]
+    fn boxed_add_mod_special_correct() {
+        let (a, b) = (any_boxed::<{ 2 * L64 }>(), any_boxed::<{ 2 * L64 }>());
+        let c: crate::Word = kani::any();
+        let p = 0u128.wrapping_sub(u128::from(c));
+        let p_minus_one = p.wrapping_sub(1);
+        let (va, vb) = (value(&a), value(&b));
+        kani::assume(va <= p_minus_one && vb <= p_minus_one);
+        let (sum, carry) = va.overflowing_add(vb);
+        let expected = if c == 0 {
+            sum
+        } else if carry || sum >= p {
+            sum.wrapping_sub(p)
+        } else {
+            sum
+        };
+        let result = a.add_mod_special(&b, Limb(c));
+        assert_eq!((value(&result), result.bits_precision()), (expected, 128));
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::BoxedUint;

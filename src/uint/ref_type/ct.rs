@@ -38,6 +38,36 @@ impl CtLt for UintRef {
     }
 }
 
+#[cfg(kani)]
+mod kani_proofs {
+    use super::UintRef;
+    use crate::uint::ref_type::kani_util::{check, value};
+    use crate::{Choice, CtAssign, CtEq, CtLt, Limb, Word};
+
+    /// Numeric comparison permits unequal widths; assignment zero-extends into the wider view.
+    #[kani::proof]
+    #[kani::unwind(5)]
+    fn uint_ref_ct_mixed_lengths() {
+        let a = kani::any::<[Word; 2]>().map(Limb);
+        let b = kani::any::<[Word; 2]>().map(Limb);
+        let (alen, blen, enabled): (usize, usize, bool) = kani::any();
+        kani::assume(alen <= 2 && blen <= 2);
+        let av = value(&a[..alen]);
+        let bv = value(&b[..blen]);
+        let lhs = UintRef::new(&a[..alen]);
+        let rhs = UintRef::new(&b[..blen]);
+        assert_eq!(lhs.ct_eq(rhs).to_bool(), av == bv);
+        assert_eq!(rhs.ct_eq(lhs).to_bool(), bv == av);
+        assert_eq!(lhs.ct_lt(rhs).to_bool(), av < bv);
+        assert_eq!(rhs.ct_lt(lhs).to_bool(), bv < av);
+        if alen >= blen {
+            let mut out = a;
+            UintRef::new_mut(&mut out[..alen]).ct_assign(rhs, Choice::from(u8::from(enabled)));
+            check(&out, &a, alen, if enabled { bv } else { av });
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use ctutils::CtLt;

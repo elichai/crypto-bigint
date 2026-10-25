@@ -99,3 +99,21 @@ mod tests {
         assert_eq!(b, Limb::MAX);
     }
 }
+
+#[cfg(kani)]
+mod kani_proofs {
+    use crate::{Limb, Word};
+
+    /// The constant-time `Ord`/`PartialEq` impls and predicates agree with `Word`.
+    #[kani::proof]
+    fn cmp_correct() {
+        let (a, b): (Word, Word) = kani::any();
+        assert_eq!(Limb(a).cmp(&Limb(b)), a.cmp(&b));
+        assert_eq!(Limb(a).cmp_vartime(Limb(b)), a.cmp(&b));
+        assert_eq!(Limb(a) == Limb(b), a == b);
+        assert_eq!(Limb(a).eq_vartime(Limb(b)), a == b);
+        assert_eq!(Limb(a).is_odd().to_bool(), a & 1 == 1);
+        assert_eq!(Limb(a).is_zero().to_bool(), a == 0);
+        assert_eq!(Limb(a).is_nonzero().to_bool(), a != 0);
+    }
+}

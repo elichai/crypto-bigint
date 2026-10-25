@@ -219,3 +219,32 @@ mod test {
         assert_eq!(LIMB, Limb::from_be_bytes(bytes));
     }
 }
+
+#[cfg(kani)]
+mod kani_proofs {
+    use crate::{Limb, Word};
+
+    /// For every input of up to `BYTES + 2` bytes and every precision in `1..=BITS`, the truncating
+    /// decoders return the input value modulo `2^bits_precision`. Precision 0 is excluded: the
+    /// mask shifts by `BITS` and panics in debug builds.
+    #[kani::proof]
+    #[kani::unwind(11)]
+    fn limb_from_slice_truncated_correct() {
+        let (buf, len, bits): ([u8; Limb::BYTES + 2], usize, u32) = kani::any();
+        kani::assume(len <= buf.len() && 0 < bits && bits <= Limb::BITS);
+        let bytes = &buf[..len];
+        let mask = Word::MAX >> (Limb::BITS - bits);
+
+        let mut be: Word = 0;
+        let mut le: Word = 0;
+        for (i, byte) in bytes.iter().enumerate() {
+            be = (be << 8) | Word::from(*byte);
+            if i < Limb::BYTES {
+                le |= Word::from(*byte) << (8 * i);
+            }
+        }
+
+        assert_eq!(Limb::from_be_slice_truncated(bytes, bits).0, be & mask);
+        assert_eq!(Limb::from_le_slice_truncated(bytes, bits).0, le & mask);
+    }
+}

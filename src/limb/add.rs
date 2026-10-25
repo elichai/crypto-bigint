@@ -224,3 +224,39 @@ mod tests {
         assert!(!bool::from(result.is_some()));
     }
 }
+
+#[cfg(kani)]
+mod kani_proofs {
+    use crate::{AddMod, CheckedAdd, Limb, NonZero, WideWord, Word};
+
+    #[kani::proof]
+    fn limb_add_variants_correct() {
+        let (a, b, carry): (Word, Word, Word) = kani::any();
+        let (sum, carry_out) = Limb(a).carrying_add(Limb(b), Limb(carry));
+        let expected = WideWord::from(a) + WideWord::from(b) + WideWord::from(carry);
+        assert_eq!(crate::word::join(sum.0, carry_out.0), expected);
+        assert!(carry_out.0 <= 2);
+        let (sum, carry_out) = Limb(a).overflowing_add(Limb(b));
+        let expected = a.overflowing_add(b);
+        assert_eq!((sum.0, carry_out.0), (expected.0, Word::from(expected.1)));
+        assert_eq!(Limb(a).wrapping_add(Limb(b)).0, a.wrapping_add(b));
+        assert_eq!(Limb(a).saturating_add(Limb(b)).0, a.saturating_add(b));
+        assert_eq!(
+            Option::<Limb>::from(Limb(a).checked_add(&Limb(b))).map(|v| v.0),
+            a.checked_add(b)
+        );
+    }
+
+    /// For reduced inputs `a, b < p`, the result is `(a + b) mod p`.
+    #[kani::proof]
+    fn add_mod_correct() {
+        let (a, b, p): (Word, Word, Word) = kani::any();
+        kani::assume(a < p && b < p);
+        let res = Limb(a).add_mod(&Limb(b), &NonZero::new(Limb(p)).unwrap());
+
+        let sum = a as WideWord + b as WideWord;
+        let p = p as WideWord;
+        let expected = if sum >= p { sum - p } else { sum };
+        assert_eq!(res.0 as WideWord, expected);
+    }
+}

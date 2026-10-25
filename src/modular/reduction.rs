@@ -114,3 +114,77 @@ pub const fn montgomery_retrieve<const LIMBS: usize>(
     );
     res
 }
+
+#[cfg(kani)]
+mod kani_proofs {
+    use super::{
+        montgomery_reduction, montgomery_reduction_inner, montgomery_retrieve,
+        montgomery_retrieve_inner,
+    };
+    use crate::{Limb, Odd, Uint, Word};
+
+    /// At m = R - 1, -m^-1 = 1 and REDC(lower + R*upper) = lower + upper
+    /// before the final subtraction. Both halves are unrestricted here, including the carry.
+    #[kani::proof]
+    #[kani::solver(z3)]
+    #[kani::unwind(3)]
+    fn montgomery_reduction_inner_max_modulus_wide() {
+        let (lower, upper): (Word, Word) = kani::any();
+        let mut lo = Uint::<1>::from_words([lower]);
+        let mut hi = Uint::<1>::from_words([upper]);
+        let carry = montgomery_reduction_inner(
+            &mut hi.limbs,
+            &mut lo.limbs,
+            &Uint::<1>::MAX.limbs,
+            Limb::ONE,
+        );
+        let actual = u128::from(hi.limbs[0].0) | (u128::from(carry.0) << Word::BITS);
+        assert_eq!(actual, u128::from(lower) + u128::from(upper));
+    }
+
+    /// All wide inputs T < m*R at m = Word::MAX; R = 2^Word::BITS is 1 modulo m.
+    #[kani::proof]
+    #[kani::solver(z3)]
+    #[kani::unwind(3)]
+    fn montgomery_reduction_max_modulus_normalized_wide() {
+        let (lower, upper): (Word, Word) = kani::any();
+        kani::assume(upper < Word::MAX);
+        let sum = u128::from(lower) + u128::from(upper);
+        let m = u128::from(Word::MAX);
+        let expected = if sum >= m { sum - m } else { sum };
+        let actual = montgomery_reduction(
+            &(
+                Uint::<1>::from_words([lower]),
+                Uint::<1>::from_words([upper]),
+            ),
+            &Odd::<Uint<1>>::new(Uint::MAX).unwrap(),
+            Limb::ONE,
+        );
+        assert_eq!(u128::from(actual.limbs[0].0), expected);
+        assert!(actual.limbs[0].0 < Word::MAX);
+    }
+
+    /// Every reduced representation at m = R - 1 retrieves unchanged, since R^-1 = 1.
+    #[kani::proof]
+    #[kani::solver(z3)]
+    #[kani::unwind(3)]
+    fn montgomery_retrieve_max_modulus_reduced() {
+        let x: Word = kani::any();
+        kani::assume(x < Word::MAX);
+        let input = Uint::<1>::from_words([x]);
+        let mut out = Uint::<1>::ZERO;
+        montgomery_retrieve_inner(
+            &input.limbs,
+            &mut out.limbs,
+            &Uint::<1>::MAX.limbs,
+            Limb::ONE,
+        );
+        assert_eq!(out.limbs[0].0, x);
+        assert_eq!(
+            montgomery_retrieve(&input, &Odd::<Uint<1>>::new(Uint::MAX).unwrap(), Limb::ONE).limbs
+                [0]
+            .0,
+            x,
+        );
+    }
+}

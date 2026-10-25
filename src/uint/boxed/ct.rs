@@ -70,6 +70,39 @@ impl CtSelect for BoxedUint {
     }
 }
 
+#[cfg(kani)]
+mod kani_proofs {
+    use crate::uint::boxed::kani_util::{L64, any_boxed, value};
+    use crate::{Choice, CtAssign, CtSelect};
+
+    /// Conditional selection, assignment and swapping preserve either complete input value.
+    #[kani::proof]
+    #[kani::unwind(5)]
+    fn boxed_ct_select_assign_swap_correct() {
+        let (mut a, mut b) = (any_boxed::<{ 2 * L64 }>(), any_boxed::<{ 2 * L64 }>());
+        let (va, vb) = (value(&a), value(&b));
+        let condition: bool = kani::any();
+        let choice = if condition {
+            Choice::TRUE
+        } else {
+            Choice::FALSE
+        };
+        let expected = if condition { vb } else { va };
+        let selected = a.ct_select(&b, choice);
+        assert_eq!(
+            (value(&selected), selected.bits_precision()),
+            (expected, 128)
+        );
+        a.ct_swap(&mut b, choice);
+        assert_eq!(value(&a), expected);
+        assert_eq!(value(&b), if condition { va } else { vb });
+        let mut assigned = any_boxed::<{ 2 * L64 }>();
+        let before = value(&assigned);
+        assigned.ct_assign(&selected, choice);
+        assert_eq!(value(&assigned), if condition { expected } else { before });
+    }
+}
+
 #[cfg(feature = "subtle")]
 impl subtle::ConditionallyNegatable for BoxedUint {
     #[inline]

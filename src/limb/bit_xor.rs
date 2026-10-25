@@ -40,6 +40,26 @@ impl BitXorAssign<&Limb> for Limb {
     }
 }
 
+#[cfg(kani)]
+mod kani_proofs {
+    use crate::{Limb, Word};
+
+    /// All word values, including owned/borrowed operators and assignments.
+    #[kani::proof]
+    fn limb_bitxor_native() {
+        let (a, b): (Word, Word) = kani::any();
+        let expected = a ^ b;
+        assert_eq!((Limb(a) ^ Limb(b)).0, expected);
+        assert_eq!((Limb(a) ^ &Limb(b)).0, expected);
+        let mut owned = Limb(a);
+        owned ^= Limb(b);
+        assert_eq!(owned.0, expected);
+        let mut borrowed = Limb(a);
+        borrowed ^= &Limb(b);
+        assert_eq!(borrowed.0, expected);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::Limb;

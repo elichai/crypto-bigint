@@ -296,3 +296,56 @@ mod tests {
         check(WideWord::MAX);
     }
 }
+
+#[cfg(kani)]
+mod kani_proofs {
+    use super::sqrt_rem_word;
+    use crate::{WideWord, Word};
+
+    /// Full-word output bounds, independent of the square reconstruction circuit.
+    #[kani::proof]
+    #[kani::unwind(34)]
+    fn sqrt_rem_word_bounds() {
+        let (s, r) = sqrt_rem_word(kani::any());
+        assert!(s >> (Word::BITS / 2) == 0);
+        assert!(WideWord::from(r) <= 2 * WideWord::from(s));
+    }
+
+    /// Appending a base-four digit requires exactly one square-root digit step.
+    // Direct square reconstruction times out at 64 bits; this recurrence avoids that multiplier.
+    // The base and recurrence support the separate induction argument recorded in KANI_PLAN.md.
+    #[kani::proof]
+    #[kani::unwind(34)]
+    fn sqrt_rem_word_radix_four_step() {
+        assert_eq!(sqrt_rem_word(0), (0, 0));
+        let value: Word = kani::any();
+        let (prefix_s, prefix_r) = sqrt_rem_word(value >> 2);
+        let (s, r) = sqrt_rem_word(value);
+        let candidate = 4 * WideWord::from(prefix_r) + WideWord::from(value & 3);
+        let trial = 4 * WideWord::from(prefix_s) + 1;
+        let increment = candidate >= trial;
+        let expected_s = 2 * WideWord::from(prefix_s) + WideWord::from(increment);
+        let expected_r = if increment {
+            candidate - trial
+        } else {
+            candidate
+        };
+        assert_eq!(WideWord::from(s), expected_s);
+        assert_eq!(WideWord::from(r), expected_r);
+    }
+
+    /// For every word `v`, the constant-time digit-by-digit square root returns `(s, r)` with
+    /// `s² + r = v` and `r <= 2s`, i.e. `s = floor(sqrt(v))`.
+    // Z3 verifies the full 32-bit-word domain; the SAT solver exceeds the 120-second budget.
+    #[kani::proof]
+    #[kani::solver(z3)]
+    #[kani::unwind(34)]
+    fn sqrt_rem_word_correct() {
+        let v: Word = kani::any();
+        let (s, r) = sqrt_rem_word(v);
+        assert!(s >> (Word::BITS / 2) == 0);
+        let s = WideWord::from(s);
+        assert_eq!(s * s + WideWord::from(r), WideWord::from(v));
+        assert!(WideWord::from(r) <= 2 * s);
+    }
+}

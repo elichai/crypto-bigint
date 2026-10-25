@@ -137,3 +137,61 @@ mod tests {
         }
     }
 }
+
+#[cfg(kani)]
+mod kani_proofs {
+    use crate::{Limb, NonZero, U128, Word};
+
+    /// 129-bit values are `(high bit, low 128 bits)` pairs. The high bit is a `u8`, not a `bool`:
+    /// Kani 0.68 mis-evaluates `<`/`<=` on symbolic `bool`s, and tuple ordering uses them.
+    fn wide(lo: u128, hi: bool) -> (u8, u128) {
+        (u8::from(hi), lo)
+    }
+
+    /// For `a + b < 2p` (the documented precondition), `add_mod` returns `(a + b) mod p`.
+    #[kani::proof]
+    fn uint_add_mod_correct() {
+        let (a, b, p): (u128, u128, u128) = kani::any();
+        kani::assume(p != 0);
+        let (sum, carry) = a.overflowing_add(b);
+        let (twice_p, p_carry) = p.overflowing_add(p);
+        kani::assume(wide(sum, carry) < wide(twice_p, p_carry));
+        kani::cover!(carry, "the sum overflows 128 bits");
+
+        let expected = if carry || sum >= p {
+            sum.wrapping_sub(p)
+        } else {
+            sum
+        };
+        let p_nz = NonZero::new(U128::from_u128(p)).unwrap();
+        let res = U128::from_u128(a).add_mod(&U128::from_u128(b), &p_nz);
+        assert_eq!(u128::from(res), expected);
+        if a == b {
+            assert_eq!(u128::from(U128::from_u128(a).double_mod(&p_nz)), expected);
+        }
+    }
+
+    /// For `p = 2^128 - c` (any single-limb `c`, including 0) and `a + b < 2p`,
+    /// `add_mod_special` returns `(a + b) mod p`.
+    #[kani::proof]
+    fn uint_add_mod_special_correct() {
+        let (a, b, c): (u128, u128, Word) = kani::any();
+        let p = if c == 0 {
+            wide(0, true)
+        } else {
+            wide(u128::from(c).wrapping_neg(), false)
+        };
+        let (sum, carry) = a.overflowing_add(b);
+        // For `c > 0`, `2p = 2^129 - 2c`; for `c == 0` every sum is below `2p = 2^129`.
+        kani::assume(c == 0 || wide(sum, carry) < wide(p.1 << 1, true));
+        kani::cover!(c != 0 && carry, "p < 2^128 and the sum overflows 128 bits");
+
+        let expected = if wide(sum, carry) >= p {
+            sum.wrapping_sub(p.1)
+        } else {
+            sum
+        };
+        let res = U128::from_u128(a).add_mod_special(&U128::from_u128(b), Limb(c));
+        assert_eq!(u128::from(res), expected);
+    }
+}

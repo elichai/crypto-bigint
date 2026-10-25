@@ -6,6 +6,127 @@ use crate::{
     RemLimb, RemMixed, ToUnsigned, Uint, UintRef, Unsigned, Wrapping,
 };
 
+#[cfg(kani)]
+mod kani_proofs {
+    use crate::{Limb, NonZero, U64, U128};
+
+    /// Covers exact and inexact inputs, including zero and shifts across a limb boundary.
+    #[kani::proof]
+    #[kani::unwind(65)]
+    fn uint_div_exact_power_of_two_u64_correct() {
+        let n: u64 = kani::any();
+        let shift: u32 = kani::any();
+        kani::assume(shift < 64);
+        let divisor = 1u64 << shift;
+        let expected = if n & (divisor - 1) == 0 {
+            Some(n >> shift)
+        } else {
+            None
+        };
+        let n = U64::from_u64(n);
+        let d = NonZero::new(U64::from_u64(divisor)).unwrap();
+        assert_eq!(
+            Option::<U64>::from(n.div_exact(&d)).map(u64::from),
+            expected
+        );
+        assert_eq!(
+            Option::<U64>::from(n.div_exact_vartime(&d)).map(u64::from),
+            expected
+        );
+    }
+
+    /// A wider divisor must also accept zero and handle shifts beyond the dividend width.
+    #[kani::proof]
+    #[kani::unwind(129)]
+    fn uint_div_exact_power_of_two_mixed_correct() {
+        let n: u64 = kani::any();
+        let shift: u32 = kani::any();
+        kani::assume(shift < 128);
+        let divisor = 1u128 << shift;
+        let expected = if u128::from(n) & (divisor - 1) == 0 {
+            Some((u128::from(n) >> shift) as u64)
+        } else {
+            None
+        };
+        let n = U64::from_u64(n);
+        let d = NonZero::new(U128::from_u128(divisor)).unwrap();
+        assert_eq!(
+            Option::<U64>::from(n.div_exact(&d)).map(u64::from),
+            expected
+        );
+        assert_eq!(
+            Option::<U64>::from(n.div_exact_vartime(&d)).map(u64::from),
+            expected
+        );
+    }
+
+    /// Full u16 dividend domain in U64 storage; full u64 division exceeds the solver timeout.
+    #[kani::proof]
+    #[kani::unwind(65)]
+    fn uint_div_rem_three_u16_correct() {
+        let n = u64::from(kani::any::<u16>());
+        let dividend = U64::from_u64(n);
+        let divisor = NonZero::new(U64::from_u64(3)).unwrap();
+        let (q, r) = dividend.div_rem(&divisor);
+        assert_eq!((u64::from(q), u64::from(r)), (n / 3, n % 3));
+        let (q, r) = dividend.div_rem_vartime(&divisor);
+        assert_eq!((u64::from(q), u64::from(r)), (n / 3, n % 3));
+        let expected = if n % 3 == 0 { Some(n / 3) } else { None };
+        assert_eq!(
+            Option::<U64>::from(dividend.div_exact(&divisor)).map(u64::from),
+            expected
+        );
+        assert_eq!(
+            Option::<U64>::from(dividend.div_exact_vartime(&divisor)).map(u64::from),
+            expected
+        );
+    }
+
+    fn check_exact_power_of_two<const SHIFT: u32>(n: u128) {
+        let divisor = 1u128 << SHIFT;
+        let expected = if n & (divisor - 1) == 0 {
+            Some(n >> SHIFT)
+        } else {
+            None
+        };
+        let n = U128::from_u128(n);
+        let d = NonZero::new(U128::from_u128(divisor)).unwrap();
+        assert_eq!(
+            Option::<U128>::from(n.div_exact(&d)).map(u128::from),
+            expected
+        );
+        assert_eq!(
+            Option::<U128>::from(n.div_exact_vartime(&d)).map(u128::from),
+            expected
+        );
+    }
+
+    /// Regression for #1310: inexact powers of two must not return a truncated quotient.
+    #[kani::proof]
+    #[kani::unwind(129)]
+    fn uint_div_exact_power_of_two_boundaries_correct() {
+        let n: u128 = kani::any();
+        check_exact_power_of_two::<1>(n);
+        check_exact_power_of_two::<{ Limb::BITS }>(n);
+        check_exact_power_of_two::<127>(n);
+    }
+
+    #[kani::proof]
+    #[kani::unwind(5)]
+    fn uint_rem2k_u128_correct() {
+        let (n, shift): (u128, u32) = kani::any();
+        let expected = if shift >= 128 {
+            n
+        } else {
+            n & ((1u128 << shift) - 1)
+        };
+        assert_eq!(
+            u128::from(U128::from_u128(n).rem2k_vartime(shift)),
+            expected
+        );
+    }
+}
+
 impl<const LIMBS: usize> Uint<LIMBS> {
     /// Computes `self / rhs` using a pre-made reciprocal, returning the quotient
     /// and remainder.

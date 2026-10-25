@@ -310,3 +310,51 @@ mod tests {
         );
     }
 }
+
+#[cfg(kani)]
+mod kani_proofs {
+    use crate::I128;
+
+    /// Arithmetic right shifts agree with `i128`, for every `u32` shift. Note that `wrapping_shr`
+    /// reduces the shift modulo `BITS` like `i128::wrapping_shr` (its docs say otherwise).
+    #[kani::proof]
+    #[kani::unwind(9)]
+    fn int_shr_correct() {
+        let (x, shift): (i128, u32) = kani::any();
+        let ix = I128::from_i128(x);
+        let checked = x.checked_shr(shift);
+
+        assert_eq!(
+            Option::<I128>::from(ix.overflowing_shr(shift)).map(i128::from),
+            checked
+        );
+        assert_eq!(ix.overflowing_shr_vartime(shift).map(i128::from), checked);
+        let unbounded = checked.unwrap_or(if x < 0 { -1 } else { 0 });
+        assert_eq!(i128::from(ix.unbounded_shr(shift)), unbounded);
+        assert_eq!(i128::from(ix.unbounded_shr_vartime(shift)), unbounded);
+        assert_eq!(i128::from(ix.wrapping_shr(shift)), x.wrapping_shr(shift));
+        assert_eq!(
+            i128::from(ix.wrapping_shr_vartime(shift)),
+            x.wrapping_shr(shift)
+        );
+        if shift < I128::BITS {
+            assert_eq!(i128::from(ix.shr(shift)), x >> shift);
+            assert_eq!(i128::from(ix.shr_vartime(shift)), x >> shift);
+        }
+    }
+
+    #[kani::proof]
+    #[kani::unwind(9)]
+    fn int_shr_operators_native() {
+        let (x, shift): (i128, u32) = kani::any();
+        kani::assume(shift < 128);
+        let value = I128::from_i128(x);
+        assert_eq!(i128::from(value >> shift), x >> shift);
+        assert_eq!(i128::from(&value >> shift), x >> shift);
+        assert_eq!(i128::from(value >> shift as i32), x >> shift);
+        assert_eq!(i128::from(&value >> shift as usize), x >> shift);
+        let mut assigned = value;
+        assigned >>= shift;
+        assert_eq!(i128::from(assigned), x >> shift);
+    }
+}

@@ -1,0 +1,57 @@
+[
+  {
+    "harness": "checked::kani_proofs::checked_div_absent_propagation",
+    "words": [32, 64],
+    "reason": "Unproved timeout: symbolic checked division and validity propagation."
+  },
+  {
+    "harness": "checked::kani_proofs::checked_div_option_composition",
+    "words": [32, 64],
+    "reason": "Unproved timeout: symbolic checked quotient and Option composition."
+  },
+  {
+    "harness": "modular::bingcd::gcd::kani_proofs::classic_bingcd_ct_matches_vartime",
+    "words": [32, 64],
+    "reason": "Unproved timeout: full constant-time versus variable-time GCD equivalence."
+  },
+  {
+    "harness": "primitives::kani_proofs::u32_rem_correct_for_bit_precisions",
+    "words": [32, 64],
+    "reason": "Unproved timeout: symbolic remainder over all stated bit precisions."
+  },
+  {
+    "harness": "uint::boxed::gcd::kani_proofs::boxed_gcd_vartime_zero_narrow_rhs",
+    "words": [32, 64],
+    "reason": "Unproved timeout: boxed GCD with zero left operand and narrower right storage."
+  },
+  {
+    "harness": "uint::boxed::gcd::kani_proofs::boxed_gcd_vartime_zero_wide_rhs",
+    "words": [32, 64],
+    "reason": "Unproved timeout: boxed GCD with zero left operand and wider right storage."
+  },
+  {
+    "harness": "uint::boxed::invert_mod::kani_proofs::boxed_invert_mod2k_vartime_out_of_range",
+    "words": [32, 64],
+    "reason": "Unproved timeout: full-domain variable-time rejection for an out-of-range exponent."
+  },
+  {
+    "harness": "uint::div_limb::kani_proofs::uint_div_rem_limb_high_bit_u128_correct",
+    "words": [32, 64],
+    "reason": "Unproved timeout: symbolic u128 quotient and remainder for high-bit limb divisors."
+  },
+  {
+    "harness": "uint::div_limb::kani_proofs::uint_div_rem_limb_one_u128_correct",
+    "words": [32, 64],
+    "reason": "Unproved timeout: symbolic u128 quotient and remainder for divisor one."
+  },
+  {
+    "harness": "uint::ref_type::sqrt::kani_proofs::sqrt_rem_word_correct",
+    "words": [64],
+    "reason": "Unproved timeout: full-word square-root reconstruction; 32-bit words pass."
+  },
+  {
+    "harness": "modular::mul::kani_proofs::montgomery_multiply_inner_matches_textbook",
+    "words": [32],
+    "reason": "Unproved timeout: full Montgomery multiplication oracle with 32-bit words."
+  }
+]

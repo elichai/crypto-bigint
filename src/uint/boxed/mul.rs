@@ -329,3 +329,176 @@ mod tests {
         }
     }
 }
+
+#[cfg(kani)]
+mod kani_proofs {
+    use crate::uint::boxed::kani_util::{L64, any_boxed, value};
+    use crate::{BoxedUint, ConcatenatingMul, ConcatenatingSquare, Limb, Wrapping};
+
+    fn assert_value(result: &BoxedUint, expected: u128, bits: u32) {
+        assert_eq!(value(result), expected);
+        assert_eq!(result.bits_precision(), bits);
+    }
+
+    fn native_product(a: u64, b: u64) -> u128 {
+        if Limb::BITS == 32 {
+            let (a_lo, a_hi) = (u64::from(a as u32), a >> 32);
+            let (b_lo, b_hi) = (u64::from(b as u32), b >> 32);
+            // Exact radix-2^32 multiplication, carrying after each native partial product.
+            let p00 = a_lo * b_lo;
+            let p01 = a_lo * b_hi + (p00 >> 32);
+            let p10 = a_hi * b_lo + u64::from(p01 as u32);
+            let p11 = a_hi * b_hi + (p01 >> 32) + (p10 >> 32);
+            u128::from(p00 as u32) | (u128::from(p10 as u32) << 32) | (u128::from(p11) << 64)
+        } else {
+            u128::from(a) * u128::from(b)
+        }
+    }
+
+    #[kani::proof]
+    #[kani::solver(cadical)]
+    #[kani::unwind(6)]
+    fn boxed_mul_wide_64() {
+        let (a, b) = (any_boxed::<L64>(), any_boxed::<L64>());
+        let expected = native_product(value(&a) as u64, value(&b) as u64);
+        let (result, carry) = a.wrapping_mul_carry(b.as_uint_ref(), 2 * L64);
+        assert_value(&result, expected, 128);
+        assert_eq!(carry, Limb::ZERO);
+        assert_value(&a.concatenating_mul(&b), expected, 128);
+    }
+
+    #[kani::proof]
+    #[cfg_attr(cpubits = "32", kani::solver(cadical))]
+    #[cfg_attr(not(cpubits = "32"), kani::solver(z3))]
+    #[kani::unwind(6)]
+    fn boxed_mul_wrapping_64() {
+        let (a, b) = (any_boxed::<L64>(), any_boxed::<L64>());
+        let expected = native_product(value(&a) as u64, value(&b) as u64) as u64;
+        assert_value(&a.wrapping_mul(&b), u128::from(expected), 64);
+        let mut assigned = Wrapping(a);
+        assigned *= &b;
+        assert_value(&assigned.0, u128::from(expected), 64);
+    }
+
+    #[kani::proof]
+    #[kani::solver(cadical)]
+    #[kani::unwind(6)]
+    fn boxed_mul_checked_saturating_64() {
+        let (a, b) = (any_boxed::<L64>(), any_boxed::<L64>());
+        let expected = native_product(value(&a) as u64, value(&b) as u64);
+        let fits = expected <= u128::from(u64::MAX);
+        let checked = a.checked_mul(&b);
+        assert_eq!(checked.is_some().to_bool(), fits);
+        if fits {
+            assert_value(&checked.unwrap(), expected, 64);
+        }
+        assert_value(
+            &a.saturating_mul(&b),
+            if fits { expected } else { u128::from(u64::MAX) },
+            64,
+        );
+    }
+
+    #[kani::proof]
+    #[cfg_attr(cpubits = "32", kani::solver(cadical))]
+    #[cfg_attr(not(cpubits = "32"), kani::solver(z3))]
+    #[kani::unwind(6)]
+    fn boxed_mul_overflowing_64() {
+        let (a, b) = (any_boxed::<L64>(), any_boxed::<L64>());
+        let expected = native_product(value(&a) as u64, value(&b) as u64);
+        let (result, overflow) = a.overflowing_mul(b.as_uint_ref(), L64);
+        assert_value(&result, u128::from(expected as u64), 64);
+        assert_eq!(overflow.to_bool(), expected >> 64 != 0);
+    }
+
+    fn native_square(a: u64) -> u128 {
+        if Limb::BITS == 32 {
+            let (lo, hi) = (u64::from(a as u32), a >> 32);
+            u128::from(lo * lo) + (u128::from(lo * hi) << 33) + (u128::from(hi * hi) << 64)
+        } else {
+            u128::from(a) * u128::from(a)
+        }
+    }
+
+    #[kani::proof]
+    #[kani::solver(z3)]
+    #[kani::unwind(6)]
+    fn boxed_square_wide_64() {
+        let a = any_boxed::<L64>();
+        let expected = native_square(value(&a) as u64);
+        let (result, carry) = a.wrapping_square_carry(2 * L64);
+        assert_value(&result, expected, 128);
+        assert_eq!(carry, Limb::ZERO);
+        assert_value(&a.concatenating_square(), expected, 128);
+    }
+
+    #[kani::proof]
+    #[kani::solver(z3)]
+    #[kani::unwind(6)]
+    fn boxed_square_wrapping_overflowing_64() {
+        let a = any_boxed::<L64>();
+        let expected = native_square(value(&a) as u64);
+        let (result, overflow) = a.overflowing_square(L64);
+        assert_value(&result, u128::from(expected as u64), 64);
+        assert_eq!(overflow.to_bool(), expected >> 64 != 0);
+        assert_value(&a.wrapping_square(), u128::from(expected as u64), 64);
+    }
+
+    #[kani::proof]
+    #[kani::solver(cadical)]
+    #[kani::unwind(6)]
+    fn boxed_square_checked_saturating_64() {
+        let a = any_boxed::<L64>();
+        let expected = native_square(value(&a) as u64);
+        let fits = expected <= u128::from(u64::MAX);
+        let checked = a.checked_square();
+        assert_eq!(checked.is_some().to_bool(), fits);
+        if fits {
+            assert_value(&checked.unwrap(), expected, 64);
+        }
+        assert_value(
+            &a.saturating_square(),
+            if fits { expected } else { u128::from(u64::MAX) },
+            64,
+        );
+    }
+
+    #[kani::proof]
+    #[kani::solver(cadical)]
+    #[kani::unwind(6)]
+    fn boxed_mul_operators_64() {
+        let (a, b) = (any_boxed::<L64>(), any_boxed::<L64>());
+        let expected = native_product(value(&a) as u64, value(&b) as u64);
+        kani::assume(expected <= u128::from(u64::MAX));
+        assert_value(&(&a * &b), expected, 64);
+        let mut assigned = a;
+        assigned *= b;
+        assert_value(&assigned, expected, 64);
+    }
+
+    /// A wider rhs can contribute overflow above the retained output, including when lhs is zero.
+    #[kani::proof]
+    #[kani::solver(cadical)]
+    #[kani::unwind(6)]
+    fn boxed_mul_wider_rhs() {
+        let (a, b) = (any_boxed::<L64>(), any_boxed::<{ 2 * L64 }>());
+        let (va, vb) = (value(&a), value(&b));
+        let low_product = native_product(va as u64, vb as u64);
+        let overflow = low_product >> 64 != 0 || (va != 0 && vb >> 64 != 0);
+        let (result, actual_overflow) = a.overflowing_mul(b.as_uint_ref(), L64);
+        assert_value(&result, u128::from(low_product as u64), 64);
+        assert_eq!(actual_overflow.to_bool(), overflow);
+    }
+
+    /// A single retained word returns the complete next word as carry, including nonzero carries.
+    #[kani::proof]
+    #[kani::solver(cadical)]
+    #[kani::unwind(6)]
+    fn boxed_mul_carry_word() {
+        let (a, b) = (any_boxed::<1>(), any_boxed::<1>());
+        let expected = u128::from(a.as_words()[0]) * u128::from(b.as_words()[0]);
+        let (result, carry) = a.wrapping_mul_carry(b.as_uint_ref(), 1);
+        assert_value(&result, expected & u128::from(crate::Word::MAX), Limb::BITS);
+        assert_eq!(u128::from(carry.0), expected >> Limb::BITS);
+    }
+}

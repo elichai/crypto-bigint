@@ -29,6 +29,20 @@ impl<const LIMBS: usize> Not for Uint<LIMBS> {
     }
 }
 
+#[cfg(kani)]
+mod kani_proofs {
+    use crate::U128;
+
+    #[kani::proof]
+    #[kani::unwind(5)]
+    fn uint_bitnot_u128_correct() {
+        let a: u128 = kani::any();
+        let x = U128::from_u128(a);
+        assert_eq!(u128::from(x.not()), !a);
+        assert_eq!(u128::from(!x), !a);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::U128;
