@@ -11,6 +11,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import threading
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -67,13 +68,36 @@ def validate_results(payload, selected, returncode):
     return failures
 
 
+def stream_progress(log, stopped):
+    with log.open(errors="replace") as source:
+        pending = ""
+        while True:
+            line = source.readline()
+            if line:
+                pending += line
+                if not line.endswith("\n"):
+                    continue
+            elif not stopped.is_set():
+                stopped.wait(0.2)
+                continue
+            if pending.lstrip().startswith(("Checking harness", "VERIFICATION:",
+                                           "CBMC failed", "Verification Time")):
+                print(pending.rstrip(), flush=True)
+            pending = ""
+            if not line:
+                return
+
+
 def run(command, env, log, timeout):
     print(shlex.join(command), flush=True)
     # Kani can leave solver children alive after its own per-harness timeout.
     with log.open("w") as output:
         process = subprocess.Popen(command, cwd=ROOT, env=env, stdout=output,
                                    stderr=subprocess.STDOUT, start_new_session=True)
+        stopped = threading.Event()
+        progress = threading.Thread(target=stream_progress, args=(log, stopped), daemon=True)
         try:
+            progress.start()
             return process.wait(timeout=timeout)
         finally:
             try:
@@ -81,6 +105,23 @@ def run(command, env, log, timeout):
             except ProcessLookupError:
                 pass
             process.wait()
+            stopped.set()
+            if progress.ident is not None:
+                progress.join(timeout=2)
+
+
+def print_resources():
+    try:
+        ram = os.sysconf("SC_PHYS_PAGES") * os.sysconf("SC_PAGE_SIZE")
+    except (AttributeError, OSError, ValueError):
+        ram = "unavailable"
+    try:
+        memory_limit = Path("/sys/fs/cgroup/memory.max").read_text().strip()
+    except OSError:
+        memory_limit = "unavailable"
+    print(f"Host resources: cpus={os.cpu_count()} ram_bytes={ram} "
+          f"disk_free_bytes={shutil.disk_usage(ROOT).free} cgroup_memory_max={memory_limit}",
+          flush=True)
 
 
 def main():
@@ -94,6 +135,7 @@ def main():
     args = parser.parse_args()
     if args.timeout < 2:
         parser.error("timeout must be at least two seconds")
+    print_resources()
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=False)
     env = os.environ.copy()
@@ -106,7 +148,7 @@ def main():
     solver_dir = output / "solver-bin"
     solver_dir.mkdir()
     wrapper = solver_dir / "z3"
-    wrapper.write_text(f"#!/bin/sh\nexec {shlex.quote(real_z3)} -T:{args.timeout - 1} \"$@\"\n")
+    wrapper.write_text(f"#!/bin/sh\nexec {shlex.quote(real_z3)} -T:{args.timeout - 1} -memory:4096 \"$@\"\n")
     wrapper.chmod(0o755)
     env["PATH"] = str(solver_dir) + os.pathsep + env["PATH"]
     common = ["cargo", "kani", "--lib", "--features", "alloc"]

@@ -60,7 +60,7 @@ CaDiCaL for 300 seconds after the upstream const-evaluation change and still tim
 
 Fresh all-feature native tests, including doctests, pass with warnings denied on both word
 configurations. In particular, upstream fixed-width and boxed zero/max-`c` tests pass.
-Formatting, whitespace, workflow lint and the CI runner's four unit tests pass.
+Formatting, whitespace, workflow lint and the CI runner's unit tests pass.
 Evidence: `/tmp/kani-ci-round-native{64,32}.log`,
 `/tmp/kani-ci-round-gaps{64,32}.json`,
 `/tmp/kani-ci-round-special-*.json` and `/tmp/kani-ci-round-monty32.json`.
@@ -81,9 +81,15 @@ Branch protection is not changed; the documentation lists the checks a maintaine
 
 CI pins Z3 5.3.1 with a checked release-archive SHA-256, matching local verification. The first
 hosted run used Ubuntu's Z3 4.8.12 and timed out on `boxed_square_wide_64` with forced32;
-84 other harnesses in that shard passed. No counterexample was produced. One other hosted
-runner shut down with exit 143 before preserving proof results; that is an infrastructure
-failure, not a verification result. The corrected workflow must be checked on its own run.
+84 other harnesses in that shard passed. No counterexample was produced. With pinned Z3,
+that proof passes in 25.421 seconds, and all 85 harnesses in its shard pass in run
+`40184650379`. Six proof shards passed in that run. Forced32 shard 2 passed 73/74,
+with `uint_mul_u64_correct` timing out at 300 seconds without a counterexample.
+Word64 shard 3 lost its hosted runner with exit 143 on two runs before preserving
+results. The cause is unconfirmed; those runs do not establish a verification result.
+The runner now streams active harnesses and outcomes, prints a host resource baseline,
+and bounds each Z3 process to 4096 MB. Resource failures remain failures. CBMC's own memory
+is not bounded by that solver option. The updated runner needs its own hosted check.
 
 CI caches the exact Kani nightly/toolchain, Cargo downloads and the checked Z3 archive.
 Kani's installer downloads its bundle again even on cache hits, so that bundle is not cached.
